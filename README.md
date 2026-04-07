@@ -126,8 +126,6 @@ GenAI-DevOps-Orchestrator/
 
 ## 🚀 Quick Start
 
-See [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) for full step-by-step instructions.
-
 ```bash
 # Deploy the Orchestrator
 cd orchestrator
@@ -137,5 +135,3 @@ gcloud run deploy devops-orchestrator --image gcr.io/[PROJECT_ID]/devops-orchest
 ```
 
 ---
-
-*Built for the GenAI DevOps Hackathon.*
