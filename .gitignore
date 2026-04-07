@@ -40,3 +40,5 @@ credentials.json
 token.json
  service_account.json
 *.json
+DEPLOYMENT_GUIDE.md
+PROMPT_CATALOG.md
