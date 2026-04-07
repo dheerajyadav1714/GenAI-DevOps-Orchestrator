@@ -7,22 +7,16 @@ ORCHESTRATOR_URL = "https://devops-orchestrator-688623456290.us-central1.run.app
 
 st.set_page_config(page_title="DevOps Assistant", page_icon="🤖", layout="wide")
 
-# Custom CSS for Maximum Clarity (Light Mode)
 st.markdown("""
 <style>
-    /* Global Background reset to white */
     .main, .stApp {
         background-color: #ffffff !important;
         color: #1a1a1a !important;
     }
-    
-    /* Header Styling */
     h1, h2, h3, h4, h5 {
         color: #1a1a1a !important;
         font-weight: 800 !important;
     }
-    
-    /* Chat Message Bubbles - High Contrast */
     [data-testid="stChatMessage"] {
         background-color: #f1f5f9 !important;
         border-radius: 12px !important;
@@ -30,25 +24,18 @@ st.markdown("""
         padding: 15px !important;
         margin-bottom: 12px !important;
     }
-    
     [data-testid="stChatMessage"] p, [data-testid="stChatMessage"] li {
         color: #1e293b !important;
         font-size: 1.05rem !important;
         line-height: 1.6 !important;
     }
-    
-    /* Metadata and icons */
     [data-testid="stChatMessageContent"] {
         color: #1e293b !important;
     }
-    
-    /* Sidebar reset */
     [data-testid="stSidebar"] {
         background-color: #f8fafc !important;
         border-right: 1px solid #e2e8f0 !important;
     }
-    
-    /* Input Box styling */
     [data-testid="stChatInput"] {
         border-top: 1px solid #e2e8f0 !important;
         background-color: #ffffff !important;
@@ -59,92 +46,38 @@ st.markdown("""
 st.title("🤖 DevOps Multi-Agent Assistant")
 st.markdown("##### Autonomous Incident Remediation & CI/CD Orchestration")
 
-# Load chat history from DB on first load
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-    try:
-        resp = requests.get(f"{ORCHESTRATOR_URL}/messages", params={"user_id": "ui_user", "limit": 50}, timeout=5)
-        if resp.status_code == 200:
-            saved = resp.json().get("messages", [])
-            if saved:
-                st.session_state.messages = saved
-    except:
-        pass
 
-# Sidebar: Clear chat button
-with st.sidebar:
-    if st.button("🗑️ Clear Chat History"):
+# ========== HELPERS ==========
+
+def safe_parse_plan(raw_plan):
+    if raw_plan is None:
+        return []
+    if isinstance(raw_plan, list):
+        return raw_plan
+    if isinstance(raw_plan, str):
         try:
-            requests.delete(f"{ORCHESTRATOR_URL}/messages", params={"user_id": "ui_user"}, timeout=5)
-        except:
-            pass
-        st.session_state.messages = []
-        st.rerun()
+            parsed = json.loads(raw_plan)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+    return []
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-
-def format_step(step):
-    tool = step.get("tool")
-    if tool == "jira":
-        action = step.get("action")
-        if action == "search_issues":
-            return "⏳ Searching Jira issues..."
-        elif action == "create_issue":
-            return "⏳ Creating Jira ticket..."
-        elif action == "get_issue":
-            return "⏳ Fetching Jira ticket..."
-        elif action == "assign_to_sprint":
-            return "⏳ Assigning to sprint..."
-        else:
-            return "⏳ Jira operation..."
-    elif tool == "slack":
-        return "⏳ Sending Slack notification..."
-    elif tool == "jenkins":
-        return "⏳ Triggering Jenkins job..."
-    elif tool == "github":
-        action = step.get("action")
-        if action == "read":
-            return "⏳ Reading file from GitHub..."
-        elif action == "create_branch":
-            return "⏳ Creating branch..."
-        elif action == "commit":
-            return "⏳ Committing changes..."
-        elif action == "create_pr":
-            return "⏳ Creating pull request..."
-        elif action == "merge_pr":
-            return "⏳ Merging pull request..."
-        else:
-            return "⏳ GitHub operation..."
-    elif tool == "calendar":
-        return "⏳ Creating calendar event..."
-    elif tool == "code":
-        return "⏳ Generating code fix with AI..."
-    elif tool == "log_analysis":
-        return "⏳ Analyzing logs with AI..."
-    elif tool == "database":
-        return "⏳ Querying database..."
-    elif tool == "reply":
-        return None
-    return None
 
 def format_result(step):
     tool = step.get("tool") or "unknown"
     action = step.get("action") or "task"
     params = step.get("params", {})
     result = step.get("result", {})
-    text = params.get("text", "")
 
     if tool == "reply":
-        return text
+        return params.get("text", "")
 
-    # Helper to clean up results
     if isinstance(result, str):
-        try: result = json.loads(result)
-        except: pass
+        try:
+            result = json.loads(result)
+        except Exception:
+            pass
 
-    # If result is a list (e.g., jira.search_issues returns raw list), handle it before calling .get()
     if isinstance(result, list):
         if tool == "jira" and action == "search_issues":
             return f"✅ **Jira Search**: Found {len(result)} issues."
@@ -154,7 +87,6 @@ def format_result(step):
             return f"✅ **GitHub Branches**: Found {len(result)} branches."
         return f"✅ **{tool.capitalize()} {action}**: {len(result)} results"
 
-    # At this point result should be a dict (or something with .get)
     if not isinstance(result, dict):
         return f"✅ **{tool.capitalize()} {action}** completed"
 
@@ -193,7 +125,7 @@ def format_result(step):
             return f"🔬 **Log Analysis**: {summary[:150]}..."
 
     if tool == "slack":
-        return f"💬 **Slack Message** sent to `{params.get('channel', 'default')}`"
+        return f"💬 **Slack Message** sent"
 
     if tool == "calendar":
         return "📅 **Calendar Event** added to your schedule"
@@ -202,96 +134,117 @@ def format_result(step):
         return "🤖 **AI Code Fix** generated for the detected issue"
 
     if tool == "database":
-        return f"🗄️ **Database Query** executed: `{params.get('question', 'Query')[:50]}...`"
+        return f"🗄️ **Database Query** executed"
 
     if tool == "rag":
-        count = result.get("count", 0)
+        count = result.get("count", 0) if isinstance(result, dict) else 0
         if action == "search":
             return f"🔍 **RAG Search**: Found {count} similar past incidents."
         if action == "runbooks":
-            rbs = result.get("runbooks", [])
+            rbs = result.get("runbooks", []) if isinstance(result, dict) else []
             return f"📝 **Runbooks**: Found {len(rbs)} runbooks."
 
     return f"✅ **{tool.capitalize()} {action}** completed"
 
+
+def run_workflow_and_wait(prompt):
+    """Submit a workflow and poll until it completes. Returns the final response string."""
+    try:
+        resp = requests.post(
+            f"{ORCHESTRATOR_URL}/run",
+            json={"request": prompt, "user_id": "ui_user"},
+            timeout=120
+        )
+        resp.raise_for_status()
+        workflow_id = resp.json()["workflow_id"]
+    except Exception as e:
+        return f"❌ Failed to start workflow: {e}"
+
+    # Poll until done (max 3 minutes)
+    for _ in range(90):
+        time.sleep(2)
+        try:
+            poll = requests.get(f"{ORCHESTRATOR_URL}/workflow/{workflow_id}", timeout=15)
+            poll.raise_for_status()
+            data = poll.json()
+
+            if data.get("status") in ["completed", "failed"]:
+                steps = safe_parse_plan(data.get("plan"))
+                output_parts = []
+                for step in steps:
+                    if step.get("tool") == "reply":
+                        reply_text = step.get("params", {}).get("text", "")
+                        if reply_text:
+                            output_parts.append(reply_text)
+                    elif step.get("result"):
+                        msg = format_result(step)
+                        if msg:
+                            output_parts.append(msg)
+
+                if output_parts:
+                    return "\n\n".join(output_parts)
+                elif data.get("status") == "failed":
+                    return "❌ Workflow failed."
+                else:
+                    return "✅ Workflow completed."
+        except Exception:
+            continue
+
+    return "⏰ Workflow is still running in the background. Check Slack for updates."
+
+
+# ========== INIT ==========
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+    try:
+        resp = requests.get(f"{ORCHESTRATOR_URL}/messages", params={"user_id": "ui_user", "limit": 50}, timeout=5)
+        if resp.status_code == 200:
+            saved = resp.json().get("messages", [])
+            if saved:
+                st.session_state.messages = saved
+    except Exception:
+        pass
+
+# Sidebar
+with st.sidebar:
+    if st.button("🗑️ Clear Chat History"):
+        try:
+            requests.delete(f"{ORCHESTRATOR_URL}/messages", params={"user_id": "ui_user"}, timeout=5)
+        except Exception:
+            pass
+        st.session_state.messages = []
+        st.rerun()
+
+# ========== RENDER ALL MESSAGES ==========
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"], unsafe_allow_html=True)
+
+# ========== HANDLE NEW INPUT ==========
 if prompt := st.chat_input("What would you like to do?"):
+    # 1. Save user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     try:
         requests.post(f"{ORCHESTRATOR_URL}/messages", json={"user_id": "ui_user", "role": "user", "content": prompt}, timeout=3)
-    except:
+    except Exception:
         pass
 
+    # 2. Show user message
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Assistant message starts immediately
+    # 3. Process with a visible spinner (blocks UI until done)
     with st.chat_message("assistant"):
-        placeholder = st.empty()
-        displayed_output = []
-        placeholder.markdown("🚀 Starting workflow...")
+        with st.spinner("🤖 Working on it... please wait"):
+            assistant_response = run_workflow_and_wait(prompt)
+        st.markdown(assistant_response, unsafe_allow_html=True)
 
-        try:
-            resp = requests.post(f"{ORCHESTRATOR_URL}/run", json={"request": prompt, "user_id": "ui_user"}, timeout=120)
-            resp.raise_for_status()
-            workflow_id = resp.json()["workflow_id"]
+    # 4. Save assistant response
+    st.session_state.messages.append({"role": "assistant", "content": assistant_response})
+    try:
+        requests.post(f"{ORCHESTRATOR_URL}/messages", json={"user_id": "ui_user", "role": "assistant", "content": assistant_response}, timeout=3)
+    except Exception:
+        pass
 
-            placeholder.markdown("⏳ Initializing agents...")
-            
-            workflow_data = None
-            max_wait = 180
-            poll_interval = 2
-            for i in range(max_wait // poll_interval):
-                time.sleep(poll_interval)
-                try:
-                    status_resp = requests.get(f"{ORCHESTRATOR_URL}/workflow/{workflow_id}", timeout=15)
-                    status_resp.raise_for_status()
-                    workflow_data = status_resp.json()
-                    status = workflow_data.get("status", "unknown")
-                    
-                    # Update dots
-                    dots = "." * ((i % 3) + 1)
-                    placeholder.markdown(f"⏳ Processing{dots} ({i * poll_interval}s)")
-
-                    if status in ["completed", "failed"]:
-                        break
-                except:
-                    continue
-
-            if not workflow_data or workflow_data.get("status") not in ["completed", "failed"]:
-                displayed_output.append("⏰ Workflow is still running. Check Slack for updates.")
-            elif workflow_data.get("status") == "failed":
-                displayed_output.append("❌ Workflow execution encountered an issue.")
-            else:
-                plan = workflow_data.get("plan", [])
-                steps = plan if isinstance(plan, list) else json.loads(plan)
-                if not steps:
-                    displayed_output.append("No actions performed.")
-                else:
-                    for idx, step in enumerate(steps):
-                        step_msg = format_step(step)
-                        if step_msg:
-                            displayed_output.append(step_msg)
-                            placeholder.markdown("\n\n".join(displayed_output), unsafe_allow_html=True)
-                            time.sleep(0.3)
-                        
-                        result_msg = format_result(step)
-                        if step_msg:
-                            displayed_output[-1] = result_msg
-                        else:
-                            displayed_output.append(result_msg)
-                        placeholder.markdown("\n\n".join(displayed_output), unsafe_allow_html=True)
-
-                if steps and any(step.get("tool") != "reply" for step in steps):
-                    displayed_output.append("🎉 Workflow completed successfully")
-
-            final_text = "\n\n".join(displayed_output)
-            placeholder.markdown(final_text, unsafe_allow_html=True)
-            st.session_state.messages.append({"role": "assistant", "content": final_text})
-            # Orchestrator securely saves this to DB autonomously now
-
-        except Exception as e:
-            error_msg = f"❌ Error: {e}"
-            st.error(error_msg)
-            st.session_state.messages.append({"role": "assistant", "content": error_msg})
-    
-    st.rerun() # Refresh to solidify history after the long-running task
+    # 5. Rerun to solidify all messages as permanent elements
+    st.rerun()
