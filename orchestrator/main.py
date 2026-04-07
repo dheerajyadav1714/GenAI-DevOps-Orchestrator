@@ -1,0 +1,1621 @@
+import os
+import json
+import re
+import uuid
+import asyncio
+import requests
+import logging
+import time as _time
+from fastapi import FastAPI, Request, BackgroundTasks
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text as sql_text
+from sqlalchemy.pool import NullPool
+import threading
+from vertexai.preview.generative_models import GenerativeModel
+import vertexai
+from google.cloud import secretmanager
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI()
+
+# ========== RAG: Embedding Helpers ==========
+def get_embedding(text):
+    """Get text embedding from Vertex AI"""
+    from vertexai.language_models import TextEmbeddingModel
+    model = TextEmbeddingModel.from_pretrained("text-embedding-005")
+    embeddings = model.get_embeddings([text[:2000]])
+    return embeddings[0].values
+
+_rag_initialized = False
+
+async def ensure_rag_tables(session):
+    """Create RAG tables if they don't exist (runs once)"""
+    global _rag_initialized
+    if _rag_initialized:
+        return
+    try:
+        await asyncio.wait_for(session.execute(sql_text("CREATE EXTENSION IF NOT EXISTS vector")), timeout=10)
+        await asyncio.wait_for(session.execute(sql_text("CREATE TABLE IF NOT EXISTS incident_embeddings (id TEXT PRIMARY KEY, error_signature TEXT, summary TEXT, fix_description TEXT, embedding vector(768), repo TEXT, file_path TEXT, created_at TIMESTAMP DEFAULT NOW())")), timeout=10)
+        await session.commit()
+        _rag_initialized = True
+    except Exception as e:
+        logger.warning(f"RAG tables setup: {e}")
+        try:
+            await session.rollback()
+        except:
+            pass
+
+async def store_incident(session, error_text, fix_text, repo="", file_path=""):
+    """Store incident with embedding for RAG"""
+    try:
+        await ensure_rag_tables(session)
+        emb = await asyncio.to_thread(get_embedding, error_text[:1000])
+        emb_str = "[" + ",".join(str(x) for x in emb) + "]"
+        incident_id = str(uuid.uuid4())
+        await session.execute(sql_text(
+            "INSERT INTO incident_embeddings (id, error_signature, summary, fix_description, embedding, repo, file_path, created_at) "
+            "VALUES (:id, :err, :summ, :fix, CAST(:emb AS vector), :repo, :fp, NOW())"
+        ), {"id": incident_id, "err": error_text[:2000], "summ": error_text[:500],
+            "fix": fix_text[:5000], "emb": emb_str, "repo": repo, "fp": file_path})
+        await session.commit()
+        return incident_id
+    except Exception as e:
+        logger.error(f"Store incident failed: {e}")
+        return None
+
+async def search_similar_incidents(session, error_text, limit=3):
+    """Search for similar past incidents using pgvector"""
+    try:
+        await ensure_rag_tables(session)
+        emb = await asyncio.to_thread(get_embedding, error_text[:1000])
+        emb_str = "[" + ",".join(str(x) for x in emb) + "]"
+        result = await session.execute(sql_text(
+            "SELECT id, error_signature, fix_description, embedding <-> CAST(:emb AS vector) AS distance "
+            "FROM incident_embeddings ORDER BY embedding <-> CAST(:emb AS vector) LIMIT :lim"
+        ), {"emb": emb_str, "lim": limit})
+        rows = result.fetchall()
+        return [{"id": r[0], "error": r[1][:200], "fix": r[2][:500], "distance": float(r[3])} for r in rows]
+    except Exception as e:
+        logger.error(f"Search incidents failed: {e}")
+        return []
+
+async def generate_runbook(gemini_model, error_text, fix_text, jira_key=""):
+    """Generate a runbook from an incident"""
+    try:
+        prompt = f"""Generate a concise DevOps runbook from this incident.
+
+Error: {error_text[:1000]}
+Fix Applied: {fix_text[:1000]}
+Jira: {jira_key}
+
+Format:
+## Problem
+## Symptoms
+## Root Cause
+## Resolution Steps
+## Prevention
+## Related Commands
+"""
+        resp = await asyncio.to_thread(gemini_model.generate_content, prompt)
+        return resp.text.strip()
+    except Exception:
+        return None
+
+def get_secret(secret_name, project_id="genai-hackathon-491712"):
+    client = secretmanager.SecretManagerServiceClient()
+    name = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
+    response = client.access_secret_version(request={"name": name})
+    return response.payload.data.decode("UTF-8")
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+engine = create_async_engine(DATABASE_URL, echo=False, poolclass=NullPool)
+AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+vertexai.init(project="genai-hackathon-491712", location="us-central1")
+gemini_model = GenerativeModel("gemini-2.5-flash")
+
+MCP_SERVERS = {
+    "jenkins": "https://jenkins-mcp-751208519049.us-central1.run.app",
+    "github": "https://github-mcp-751208519049.us-central1.run.app",
+    "jira": "https://jira-mcp-751208519049.us-central1.run.app",
+    "slack": "https://slack-mcp-751208519049.us-central1.run.app",
+    "calendar": "https://calendar-mcp-751208519049.us-central1.run.app",
+    "confluence": "https://confluence-mcp-751208519049.us-central1.run.app",
+}
+
+ALLOYDB_QUERY_URL = "https://alloydb-nl-query-oaaiesk3ja-uc.a.run.app"
+SLACK_CHANNEL = "#devops-notifications"
+JOB_REPO_MAP = {"test-pipeline": "dheerajyadav1714/ci_cd"}
+
+class WorkflowRequest(BaseModel):
+    request: str
+    user_id: str = "anonymous"
+
+@app.on_event("startup")
+async def startup_event():
+    # Fire and forget DB initialization to prevent blocking Uvicorn startup (Cloud Run Health Check)
+    asyncio.create_task(_init_db())
+
+async def _init_db():
+    # Each table in its own transaction to prevent PostgreSQL aborted-transaction issues
+    tables = [
+        "CREATE TABLE IF NOT EXISTS pending_fixes (id TEXT PRIMARY KEY, fix_text TEXT, job_name TEXT, build_number TEXT, detected_repo TEXT, detected_file_path TEXT, created_at TIMESTAMP DEFAULT NOW())",
+        "CREATE TABLE IF NOT EXISTS workflows (id TEXT PRIMARY KEY, user_id TEXT, request TEXT, status TEXT, plan TEXT, created_at TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS tool_calls (id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text, workflow_id TEXT, agent_name TEXT, tool_name TEXT, params TEXT, result TEXT, status TEXT, started_at TIMESTAMP, finished_at TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS runbooks (id TEXT PRIMARY KEY, incident_id TEXT, jira_key TEXT, title TEXT, content TEXT, created_at TIMESTAMP DEFAULT NOW())",
+        "CREATE TABLE IF NOT EXISTS incidents (id TEXT PRIMARY KEY, job_name TEXT, build_number TEXT, detected_at TIMESTAMP DEFAULT NOW(), fixed_at TIMESTAMP, mttr_seconds FLOAT, status TEXT DEFAULT 'detected', confidence_score INTEGER, severity TEXT)",
+        "CREATE TABLE IF NOT EXISTS chat_messages (id SERIAL PRIMARY KEY, user_id TEXT, role TEXT, content TEXT, created_at TIMESTAMP DEFAULT NOW())",
+        "CREATE TABLE IF NOT EXISTS pipeline_runs (id TEXT PRIMARY KEY, job_name TEXT, build_number TEXT, status TEXT, duration FLOAT, created_at TIMESTAMP DEFAULT NOW())",
+    ]
+    try:
+        async with AsyncSessionLocal() as session:
+            for ddl in tables:
+                try:
+                    await session.execute(sql_text(ddl))
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    logger.warning(f"Table creation step: {e}")
+            
+            # Add missing columns (each in its own commit)
+            alter_cols = [
+                "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS detected_repo TEXT",
+                "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS fix_id TEXT",
+            ]
+            for ddl in alter_cols:
+                try:
+                    await session.execute(sql_text(ddl))
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+    except Exception as e:
+        logger.error(f"DB Startup failed: {e}")
+
+
+# ========== RETRY HELPER ==========
+def mcp_request(method, url, retries=3, **kwargs):
+    """HTTP request with retry for SSL/connection errors on Cloud Run"""
+    kwargs.setdefault("timeout", 30)
+    for attempt in range(retries):
+        try:
+            resp = getattr(requests, method)(url, **kwargs)
+            return resp
+        except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
+            if attempt < retries - 1:
+                logger.warning(f"Retry {attempt+1}/{retries} for {url}: {e}")
+                _time.sleep(1 * (attempt + 1))
+            else:
+                raise
+
+
+# ========== ANALYZE FAILURE ==========
+def analyze_failure(logs, past_incidents=""):
+    """Use Gemini to analyze Jenkins failure logs with confidence score"""
+    analysis = gemini_model.generate_content(f"""Analyse this Jenkins build log and provide a clear, formatted failure report.
+{past_incidents}
+
+Use this EXACT format (Slack markdown):
+• *Repo:* <repo name>
+• *File:* <file path>
+• *Summary:* <one sentence summary>
+• *Root Cause:* <detailed root cause explanation>
+• *Suggested Fix:*
+```python
+<corrected code>
+```
+• *Severity:* High/Medium/Low
+• *Fix Confidence:* <0-100>%
+
+Confidence scoring guide:
+- 90-100%: Simple, obvious fix (null check, division by zero, missing import)
+- 70-89%: Clear fix but needs review (logic change, API update)
+- 50-69%: Likely fix but uncertain (complex logic, multiple possible causes)
+- Below 50%: Needs human investigation
+
+Rules:
+- Use Slack markdown (*bold*, `code`)
+- Keep it concise but complete
+- Include the FULL corrected code in the fix
+- Do NOT output JSON
+- ALWAYS include the Fix Confidence line
+
+Logs:
+{logs[-3000:]}""")
+    return analysis.text.strip()
+
+def parse_confidence(analysis_text):
+    """Extract confidence score from analysis text"""
+    import re
+    match = re.search(r'Fix Confidence[:\*]*\s*(\d+)', analysis_text)
+    return int(match.group(1)) if match else 75
+
+def parse_severity(analysis_text):
+    """Extract severity from analysis text"""
+    if 'High' in analysis_text:
+        return 'High'
+    elif 'Medium' in analysis_text:
+        return 'Medium'
+    return 'Low'
+
+
+# ========== FIX WORKFLOW ==========
+def run_fix_workflow(fix_text, job_name, build_number, detected_repo=None, detected_file_path=None, auto_approve=False):
+    repo = detected_repo or JOB_REPO_MAP.get(job_name)
+    if not repo:
+        requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"Could not determine repo for job {job_name}."}, timeout=30)
+        return
+
+    file_path = detected_file_path
+    if not file_path:
+        m = re.search(r'file_path:\s*([^\n]+)', fix_text, re.IGNORECASE)
+        file_path = m.group(1).strip() if m else "src/bug.py"
+
+    code_match = re.search(r'```(?:python|groovy)?\n(.*?)```', fix_text, re.DOTALL)
+    new_content = code_match.group(1).strip() if code_match else fix_text
+
+    # RAG search removed from background sync thread to prevent async loop crashes
+    # RAG matches are already populated securely in the AI review and planning phases.
+
+    jira_key = None
+    try:
+        resp = requests.post(f"{MCP_SERVERS['jira']}/issue", json={
+            "project_key": "SCRUM", "summary": f"Auto-fix for build #{build_number} failure",
+            "description": f"Job: {job_name}\nRepo: {repo}\nFile: {file_path}\n\n{fix_text}", "issue_type": "Task"
+        }, timeout=30)
+        resp.raise_for_status()
+        jira_key = resp.json().get("key")
+    except Exception as e:
+        logger.error(f"Jira failed: {e}")
+
+    requests.post(f"{MCP_SERVERS['slack']}/send", json={
+        "text": f"*Auto-fix in progress...*\nRepo: `{repo}` | File: `{file_path}` | Jira: {jira_key or 'N/A'}"
+    }, timeout=30)
+
+    branch_name = f"auto-fix/build-{build_number}"
+    br = mcp_request("post", f"{MCP_SERVERS['github']}/create-branch", json={"repo": repo, "branch": branch_name, "base": "main"}, timeout=30)
+    if br.status_code != 200 and "already exists" not in br.text.lower():
+        mcp_request("post", f"{MCP_SERVERS['slack']}/send", json={"text": f"Failed to create branch."}, timeout=30)
+        return
+
+    cr = mcp_request("post", f"{MCP_SERVERS['github']}/commit", json={
+        "repo": repo, "branch": branch_name, "path": file_path, "content": new_content,
+        "message": f"Auto-fix build #{build_number}\n\n{fix_text[:200]}"
+    }, timeout=30)
+    if cr.status_code != 200:
+        mcp_request("post", f"{MCP_SERVERS['slack']}/send", json={"text": f"Failed to commit fix."}, timeout=30)
+        return
+
+    pr = mcp_request("post", f"{MCP_SERVERS['github']}/create-pr", json={
+        "repo": repo, "title": f"Auto-fix: Build #{build_number}", "body": fix_text[:65000],
+        "head": branch_name, "base": "main"
+    }, timeout=30)
+    if pr.status_code != 200:
+        mcp_request("post", f"{MCP_SERVERS['slack']}/send", json={"text": "Failed to create PR."}, timeout=30)
+        return
+    pr_data = pr.json()
+    pr_number = pr_data.get("number")
+    pr_url = pr_data.get("url") or f"https://github.com/{repo}/pull/{pr_number}"
+
+    requests.post(f"{MCP_SERVERS['jenkins']}/trigger", json={
+        "job_name": job_name, "parameters": {"BRANCH": branch_name}
+    }, timeout=120)
+
+    # Auto AI Review on the PR
+    try:
+        parts = repo.split("/")
+        pr_detail = mcp_request("get", f"{MCP_SERVERS['github']}/pr/{parts[0]}/{parts[1]}/{pr_number}", timeout=30).json()
+        diff_text = ""
+        for f_info in pr_detail.get("files_changed", []):
+            diff_text += f"\n--- {f_info['filename']} ({f_info['status']}) +{f_info['additions']}/-{f_info['deletions']}\n"
+            diff_text += f_info.get("patch", "")[:1000] + "\n"
+        review_model = GenerativeModel("gemini-2.5-flash")
+        review_prompt = f"""Review this auto-fix PR.
+PR #{pr_number}: {pr_detail.get('title', '')}
+Diff:
+{diff_text[:4000]}
+
+Provide: ## Summary, ## Code Quality, ## Security, ## Verdict (APPROVE/REQUEST_CHANGES)"""
+        review_resp = review_model.generate_content(review_prompt)
+        review_body = f"## AI Code Review (Gemini)\n\n{review_resp.text.strip()}"
+        mcp_request("post", f"{MCP_SERVERS['github']}/pr/comment", json={
+            "repo": repo, "pr_number": pr_number, "body": review_body
+        }, timeout=30)
+        mcp_request("post", f"{MCP_SERVERS['slack']}/send", json={
+            "text": f"AI reviewed PR #{pr_number} - check review on GitHub: {pr_url}"
+        }, timeout=30)
+    except Exception as rev_err:
+        logger.error(f"Auto-review failed: {rev_err}")
+
+    if auto_approve:
+        mcp_request("post", f"{MCP_SERVERS['slack']}/send", json={"text": f"🚀 High confidence fix! Auto-merging PR #{pr_number} without manual approval:\n{pr_url}"}, timeout=30)
+        # We perform the merge synchronously to avoid async event loop collisions in threads
+        mr = mcp_request("post", f"{MCP_SERVERS['github']}/merge-pr", json={"repo": repo, "pr_number": pr_number, "merge_method": "merge"}, timeout=30)
+        if mr.status_code == 200 or "already merged" in mr.text.lower():
+            if jira_key:
+                mcp_request("post", f"{MCP_SERVERS['jira']}/update", json={
+                    "key": jira_key, 
+                    "status": "Done",
+                    "comment": f"🚀 Automated resolution complete. Auto-merged PR #{pr_number}: {pr_url} to successfully heal the pipeline."
+                }, timeout=30)
+            mcp_request("post", f"{MCP_SERVERS['slack']}/send", json={"text": f"PR #{pr_number} successfully auto-merged! Jira {jira_key} marked Done with PR details attached."}, timeout=30)
+    else:
+        ar = mcp_request("post", f"{MCP_SERVERS['slack']}/send-approval", json={
+            "channel": SLACK_CHANNEL, "pr_url": pr_url, "pr_number": pr_number or 0,
+            "repo": repo, "jira_key": jira_key or "", "workflow_id": str(uuid.uuid4())
+        }, timeout=30)
+        if ar.status_code != 200:
+            mcp_request("post", f"{MCP_SERVERS['slack']}/send", json={"text": f"PR #{pr_number} created: {pr_url} | Jira: {jira_key}"}, timeout=30)
+async def process_approval(action_type, pr_number, repo, jira_key, workflow_id, pr_url, error_text='', fix_text=''):
+    if action_type == "approve":
+        mr = mcp_request("post", f"{MCP_SERVERS['github']}/merge-pr", json={"repo": repo, "pr_number": pr_number, "merge_method": "merge"}, timeout=30)
+        if mr.status_code == 200 or "already merged" in mr.text.lower():
+            if jira_key:
+                mcp_request("post", f"{MCP_SERVERS['jira']}/update", json={
+                    "key": jira_key, 
+                    "status": "Done",
+                    "comment": f"🚀 Manual approval received. Auto-merged PR #{pr_number}: {pr_url} to resolve the issue."
+                }, timeout=30)
+            # Record MTTR — mark incident as fixed
+            try:
+                async with AsyncSessionLocal() as inc_session:
+                    await inc_session.execute(sql_text(
+                        "UPDATE incidents SET fixed_at = NOW(), status = 'fixed', "
+                        "mttr_seconds = EXTRACT(EPOCH FROM (NOW() - detected_at)) "
+                        "WHERE id = (SELECT id FROM incidents WHERE detected_repo = :repo AND status = 'detected' "
+                        "ORDER BY detected_at DESC LIMIT 1)"
+                    ), {"repo": repo})
+                    await inc_session.commit()
+            except Exception as mttr_err:
+                logger.warning(f"MTTR update: {mttr_err}")
+            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"PR #{pr_number} merged! Jira {jira_key} marked Done."}, timeout=30)
+            # Look up analysis_text from pending_fixes
+            try:
+                async with AsyncSessionLocal() as lookup:
+                    r = await lookup.execute(sql_text("SELECT fix_text FROM pending_fixes WHERE detected_repo = :repo ORDER BY created_at DESC LIMIT 1"),
+                        {"repo": repo})
+                    row = r.fetchone()
+                    if row and row[0]:
+                        error_text = row[0]
+            except Exception as le:
+                logger.warning(f"Could not look up pending fix: {le}")
+            # Store incident for RAG + Generate Runbook
+            try:
+                async with AsyncSessionLocal() as s:
+                    stored_error = error_text or f"Auto-fix for {jira_key} in {repo}: PR #{pr_number}"
+                    stored_fix = fix_text or f"Fix merged via PR #{pr_number}"
+                    await store_incident(s, stored_error, stored_fix, repo)
+                    runbook = await generate_runbook(gemini_model, f"Issue {jira_key} in {repo}", f"Fixed via PR #{pr_number}")
+                    if runbook:
+                        rb_id = str(uuid.uuid4())
+                        await s.execute(sql_text("INSERT INTO runbooks (id, incident_id, jira_key, title, content, created_at) VALUES (:id, :iid, :jk, :t, :c, NOW())"),
+                            {"id": rb_id, "iid": rb_id, "jk": jira_key, "t": f"Runbook: {jira_key}", "c": runbook})
+                        await s.commit()
+                        requests.post(f"{MCP_SERVERS['slack']}/send", json={
+                            "channel": SLACK_CHANNEL,
+                            "text": f"Runbook generated for {jira_key}!\n{runbook[:2000]}",
+                            "blocks": [
+                                {"type": "header", "text": {"type": "plain_text", "text": f"📝 Runbook: {jira_key}"}},
+                                {"type": "section", "text": {"type": "mrkdwn", "text": runbook[:2500]}}
+                            ]
+                        }, timeout=30)
+                        logger.info(f"Runbook stored for {jira_key}")
+                    else:
+                        logger.warning("Runbook generation returned None")
+            except Exception as post_err:
+                logger.error(f"Post-merge tasks failed: {post_err}")
+        else:
+            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"Failed to merge PR #{pr_number}."}, timeout=30)
+    else:
+        requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"PR #{pr_number} rejected."}, timeout=30)
+
+
+# ========== TWO-PASS WORKFLOW EXECUTION ==========
+async def execute_workflow_async(workflow_id, user_request):
+    try:
+        logger.info(f"Workflow {workflow_id} started")
+
+        if user_request.lower().strip() in ["say hello", "hi", "hello", "hey"]:
+            steps = [{"tool": "reply", "action": "send", "params": {"text": "Hello! I'm your DevOps assistant. I can help with:\n- **Jira**: List, search, create, update tickets, assign to sprints\n- **GitHub**: Read files, list branches/PRs, create branches, commit, create PRs\n- **Jenkins**: Trigger builds, auto-fix failures\n- **Slack**: Send notifications\n- **Calendar**: Create events\n\nWhat would you like to do?"}}]
+            async with AsyncSessionLocal() as session:
+                await session.execute(sql_text("UPDATE workflows SET status='completed', plan=:plan WHERE id=:id"), {"plan": json.dumps(steps), "id": workflow_id})
+                await session.commit()
+            return
+
+        # ===== PASS 1: PLAN =====
+        plan_prompt = f"""You are a DevOps assistant. Output ONLY a JSON array of tool steps. No other text.
+
+Available tools:
+- jira.get_issue: {{"key": "SCRUM-11"}}
+- jira.search_issues: {{"jql": "project = SCRUM AND status = 'To Do' ORDER BY created DESC"}}
+- jira.create_issue: {{"project_key": "SCRUM", "summary": "Fix login bug", "description": "Details..."}}
+- jira.update_issue: {{"key": "SCRUM-11", "status": "In Progress"}} or {{"key": "SCRUM-11", "comment": "Working on it"}}
+- jira.assign_to_sprint: {{"key": "SCRUM-11", "sprint_name": "Sprint 1"}}
+- code.generate_fix: {{"issue_key": "SCRUM-11", "repo": "owner/repo", "file_path": "src/bug.py"}}
+- github.read: {{"repo": "owner/repo", "path": "README.md", "branch": "main"}}
+- github.list_contents: {{"repo": "owner/repo", "path": "", "branch": "main"}}
+- github.list_branches: {{"repo": "owner/repo"}}
+- github.list_prs: {{"repo": "owner/repo", "state": "open"}}
+- github.get_pr: {{"repo": "owner/repo", "pr_number": 7}}
+- github.create_branch: {{"repo": "owner/repo", "branch": "feature/x", "base": "main"}}
+- github.commit: {{"repo": "owner/repo", "branch": "feature/x", "path": "file.py", "content": "code", "message": "msg"}}
+- github.create_pr: {{"repo": "owner/repo", "title": "PR title", "body": "description", "head": "feature/x", "base": "main"}}
+- github.merge_pr: {{"repo": "owner/repo", "pr_number": 7, "merge_method": "merge"}}
+- github.review_pr: {{"repo": "owner/repo", "pr_number": 7}}  (AI reviews the PR diff for bugs, security, quality)
+- jenkins.trigger: {{"job_name": "test-pipeline", "parameters": {{"FAIL": true}}}}
+- slack.send: {{"text": "message"}}
+- calendar.create_event: {{"summary": "Meeting", "start_time": "2026-04-03T10:00:00", "end_time": "2026-04-03T11:00:00"}}
+- log_analysis.analyze: {{"log": "error text"}}
+- database.query: {{"question": "show all workflows"}}
+- rag.search: {{"query": "divide by zero error"}}  (search past incidents for similar issues)
+- rag.runbooks: {{"query": "build failure"}}  (search runbooks)
+- release_notes.generate: {{"repo": "owner/repo", "version": "v1.2.0"}}  (auto-generate release notes from merged PRs and Jira tickets, publish to Confluence and notify Slack)
+
+Jira JQL examples:
+- All tickets: "project = SCRUM ORDER BY created DESC"
+- Open/To Do: "project = SCRUM AND status = 'To Do' ORDER BY created DESC"
+- In Progress: "project = SCRUM AND status = 'In Progress'"
+- Done/Closed: "project = SCRUM AND status = 'Done'"
+- My tickets: "project = SCRUM AND assignee = currentUser()"
+- Bugs only: "project = SCRUM AND issuetype = Bug"
+- Recent: "project = SCRUM AND created >= -7d ORDER BY created DESC"
+
+Default repo: dheerajyadav1714/ci_cd
+Default Jenkins job: test-pipeline
+Default file: src/bug.py
+
+RULES:
+1. Output ONLY the JSON array.
+2. Do NOT include a reply step - the system will auto-generate the reply.
+3. For "list tickets" or "show tickets", use jira.search_issues with appropriate JQL.
+4. For "fix ticket X", use code.generate_fix.
+5. For Jenkins trigger, BRANCH parameter is optional (defaults to main).
+6. IMPORTANT: Build numbers (e.g. "Build #96") are NOT the same as PR numbers. PRs usually have low numbers (e.g. #17, #18). If user says "review PR" with a build number, first use github.list_prs to find the correct PR, then use github.review_pr with the correct pr_number.
+7. For "review PR", always use the actual GitHub PR number, NOT the Jenkins build number.
+8. CRITICAL: When using github.create_pr or jira.create_issue, you MUST provide a comprehensive, multi-line string for the `body` or `description` parameter. Never let it be blank or "None". Elaborate professionally on the fix or the issue.
+
+User request: "{user_request}"
+"""
+        response = await asyncio.to_thread(gemini_model.generate_content, plan_prompt)
+        raw = response.text.strip()
+        logger.info(f"Gemini plan: {raw}")
+
+        match = re.search(r'\[\s*\{.*\}\s*\]', raw, re.DOTALL)
+        steps = json.loads(match.group(0)) if match else []
+
+        # Validate steps
+        validated = []
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            if "tool_code" in step and "tool" not in step:
+                step["tool"] = step.pop("tool_code")
+
+            if "tool" in step and "." in step["tool"]:
+                parts = step["tool"].split(".")
+                step["tool"] = parts[0]
+                if len(parts) > 1 and "action" not in step:
+                    step["action"] = parts[1]
+            if "parameters" in step and "params" not in step:
+                step["params"] = step.pop("parameters")
+            step.setdefault("tool", "reply")
+            step.setdefault("params", {})
+            if "action" not in step:
+                tool = step["tool"]
+                step["action"] = {"reply": "send", "slack": "send", "jenkins": "trigger"}.get(tool, "unknown")
+            # Skip reply steps from Gemini (we generate our own)
+            if step["tool"] != "reply":
+                validated.append(step)
+        steps = validated
+
+        if not steps:
+            steps = [{"tool": "reply", "action": "send", "params": {"text": "I didn't understand. Try: 'List all tickets', 'Trigger Jenkins', or 'Read README from dheerajyadav1714/ci_cd'"}}]
+            async with AsyncSessionLocal() as session:
+                await session.execute(sql_text("UPDATE workflows SET status='completed', plan=:plan WHERE id=:id"), {"plan": json.dumps(steps), "id": workflow_id})
+                await session.commit()
+            return
+
+        # ===== EXECUTE STEPS =====
+        context = {}
+        step_results = []
+        async with AsyncSessionLocal() as session:
+            for idx, step in enumerate(steps):
+                tool = step["tool"]
+                action = step["action"]
+                params = step.get("params", {})
+                logger.info(f"Step {idx+1}/{len(steps)}: {tool}.{action} -> {params}")
+                result = {}
+
+                try:
+                    # ---------- JIRA ----------
+                    if tool == "jira" and action == "get_issue":
+                        resp = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['jira']}/issue/{params['key']}", timeout=30)
+                        result = resp.json()
+                        context["jira_issue"] = result
+
+                    elif tool == "jira" and action == "search_issues":
+                        jql = params.get("jql", "project = SCRUM ORDER BY created DESC")
+                        resp = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['jira']}/search", params={"jql": jql, "maxResults": 50}, timeout=30)
+                        result = resp.json() if resp.status_code == 200 else []
+                        if isinstance(result, list):
+                            md = "| Key | Summary | Status | Assignee |\n| --- | --- | --- | --- |\n"
+                            for i in result:
+                                md += f"| {i.get('key','')} | {i.get('summary','')} | {i.get('status','')} | {i.get('assignee','Unassigned')} |\n"
+                            context["jira_search"] = f"Found {len(result)} tickets:\n\n{md}"
+                        else:
+                            context["jira_search"] = str(result)
+
+                    elif tool == "jira" and action == "create_issue":
+                        if "issue_type" not in params:
+                            params["issue_type"] = "Task"
+                        resp = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['jira']}/issue", json=params, timeout=30)
+                        result = resp.json()
+                        context["jira_created"] = result
+
+                    elif tool == "jira" and action in ["update_issue", "update"]:
+                        resp = requests.post(f"{MCP_SERVERS['jira']}/update", json=params, timeout=30)
+                        result = resp.json()
+                        context["jira_updated"] = result
+
+                    elif tool == "jira" and action == "assign_to_sprint":
+                        resp = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['jira']}/issue/{params['key']}/sprint?sprint_name={params['sprint_name']}", timeout=30)
+                        result = resp.json()
+                        context["jira_sprint"] = result
+
+                    # ---------- CODE GEN ----------
+                    elif tool == "code" and action == "generate_fix":
+                        issue_key = params.get("issue_key", "")
+                        repo = params.get("repo", "dheerajyadav1714/ci_cd")
+                        file_path = params.get("file_path", "src/bug.py")
+                        desc = ""
+                        if issue_key:
+                            ir = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['jira']}/issue/{issue_key}", timeout=30)
+                            if ir.status_code == 200:
+                                issue_data = ir.json()
+                                desc = str(issue_data.get("description", ""))
+                                context["jira_issue"] = issue_data
+                        fr = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['github']}/read", params={"repo": repo, "path": file_path}, timeout=30)
+                        original = fr.json().get("content", "") if fr.status_code == 200 else ""
+                        # Generate fix
+                        fix = await asyncio.to_thread(gemini_model.generate_content,
+                            f"Fix this bug. Output ONLY the corrected code, no explanations or markdown fences.\nBug: {desc}\nFile {file_path}:\n{original}\nCorrected code:")
+                        fix_code = fix.text.strip()
+                        # Remove markdown code fences if present
+                        if fix_code.startswith("```"):
+                            fix_code = "\n".join(fix_code.split("\n")[1:])
+                        if fix_code.endswith("```"):
+                            fix_code = "\n".join(fix_code.split("\n")[:-1])
+                        context["generated_fix"] = fix_code
+                        # Create branch
+                        branch_name = f"fix/{issue_key}" if issue_key else f"fix/auto-{uuid.uuid4().hex[:8]}"
+                        br = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['github']}/create-branch", json={"repo": repo, "branch": branch_name, "base": "main"}, timeout=30)
+                        # Commit fix
+                        cr = requests.post(f"{MCP_SERVERS['github']}/commit", json={
+                            "repo": repo, "branch": branch_name, "path": file_path,
+                            "content": fix_code, "message": f"Fix {issue_key}: {desc[:100]}"
+                        }, timeout=30)
+                        # Create PR
+                        pr_resp = requests.post(f"{MCP_SERVERS['github']}/create-pr", json={
+                            "repo": repo, "title": f"Fix {issue_key}",
+                            "body": f"Auto-fix for {issue_key}\n\n{desc[:500]}", "head": branch_name, "base": "main"
+                        }, timeout=30)
+                        pr_data = pr_resp.json() if pr_resp.status_code == 200 else {}
+                        pr_number = pr_data.get("number")
+                        pr_url = pr_data.get("url", "")
+                        context["pr_created"] = {"number": pr_number, "url": pr_url, "branch": branch_name}
+                        # AI Review on the PR
+                        if pr_number:
+                            try:
+                                parts = repo.split("/")
+                                pr_detail = requests.get(f"{MCP_SERVERS['github']}/pr/{parts[0]}/{parts[1]}/{pr_number}", timeout=30).json()
+                                diff_text = ""
+                                for f_info in pr_detail.get("files_changed", []):
+                                    diff_text += f"\n--- {f_info['filename']} +{f_info['additions']}/-{f_info['deletions']}\n"
+                                    diff_text += f_info.get("patch", "")[:1000]
+                                review_resp = await asyncio.to_thread(gemini_model.generate_content,
+                                    f"Review this PR fix.\nPR #{pr_number}: Fix {issue_key}\nDiff:\n{diff_text[:3000]}\n\nProvide: ## Summary, ## Code Quality, ## Security, ## Verdict")
+                                review_body = f"## AI Code Review (Gemini)\n\n{review_resp.text.strip()}"
+                                requests.post(f"{MCP_SERVERS['github']}/pr/comment", json={
+                                    "repo": repo, "pr_number": pr_number, "body": review_body
+                                }, timeout=30)
+                                context["ai_review"] = "Posted on PR"
+                            except Exception as rev_err:
+                                logger.error(f"Auto-review failed: {rev_err}")
+                        # Notify Slack
+                        requests.post(f"{MCP_SERVERS['slack']}/send", json={
+                            "text": f"Fix for {issue_key} ready!\nPR #{pr_number}: {pr_url}\nReview posted on GitHub."
+                        }, timeout=30)
+                        # Trigger Jenkins on fix branch for testing
+                        if pr_number:
+                            try:
+                                requests.post(f"{MCP_SERVERS['jenkins']}/trigger", json={
+                                    "job_name": "test-pipeline", "parameters": {"BRANCH": branch_name}
+                                }, timeout=120)
+                            except Exception:
+                                pass
+                        # Send Approve/Reject buttons
+                        if pr_number:
+                            try:
+                                requests.post(f"{MCP_SERVERS['slack']}/send-approval", json={
+                                    "channel": SLACK_CHANNEL, "pr_url": pr_url,
+                                    "pr_number": pr_number, "repo": repo,
+                                    "jira_key": issue_key or "", "workflow_id": workflow_id
+                                }, timeout=30)
+                            except Exception:
+                                pass
+                        # Update Jira status to In Progress
+                        if issue_key:
+                            try:
+                                requests.post(f"{MCP_SERVERS['jira']}/update", json={"key": issue_key, "status": "In Progress"}, timeout=30)
+                            except:
+                                pass
+                        result = {"status": "fix_created", "pr_number": pr_number, "pr_url": pr_url, "branch": branch_name}
+
+                    # ---------- GITHUB ----------
+                    elif tool == "github" and action == "read":
+                        resp = requests.get(f"{MCP_SERVERS['github']}/read", params=params, timeout=30)
+                        result = resp.json()
+                        context["github_file"] = result
+
+                    elif tool == "github" and action == "list_contents":
+                        resp = requests.get(f"{MCP_SERVERS['github']}/list", params=params, timeout=30)
+                        result = resp.json()
+                        context["github_contents"] = result
+
+                    elif tool == "github" and action == "list_branches":
+                        resp = requests.get(f"{MCP_SERVERS['github']}/branches", params={"repo": params["repo"]}, timeout=30)
+                        result = resp.json()
+                        context["github_branches"] = result
+
+                    elif tool == "github" and action == "list_prs":
+                        resp = requests.get(f"{MCP_SERVERS['github']}/prs", params=params, timeout=30)
+                        result = resp.json()
+                        context["github_prs"] = result
+
+                    elif tool == "github" and action == "get_pr":
+                        repo = params["repo"]
+                        parts = repo.split("/")
+                        pr_num = params["pr_number"]
+                        resp = requests.get(f"{MCP_SERVERS['github']}/pr/{parts[0]}/{parts[1]}/{pr_num}", timeout=30)
+                        result = resp.json()
+                        context["github_pr_detail"] = result
+
+                    elif tool == "github" and action == "create_branch":
+                        resp = requests.post(f"{MCP_SERVERS['github']}/create-branch", json=params, timeout=30)
+                        result = resp.json()
+                        context["github_branch_created"] = result
+
+                    elif tool == "github" and action == "commit":
+                        if params.get("content") == "{{generated_fix}}" and "generated_fix" in context:
+                            params["content"] = context["generated_fix"]
+                        resp = requests.post(f"{MCP_SERVERS['github']}/commit", json=params, timeout=30)
+                        result = resp.json()
+                        context["github_committed"] = result
+
+                    elif tool == "github" and action == "create_pr":
+                        if "body" not in params:
+                            params["body"] = params.get("title", "Automated PR")
+                        resp = requests.post(f"{MCP_SERVERS['github']}/create-pr", json=params, timeout=30)
+                        result = resp.json()
+                        context["github_pr_created"] = result
+
+                    elif tool == "github" and action == "merge_pr":
+                        resp = requests.post(f"{MCP_SERVERS['github']}/merge-pr", json=params, timeout=30)
+                        result = resp.json()
+                        context["github_pr_merged"] = result
+
+                    elif tool == "github" and action == "review_pr":
+                        # Smart parameter extraction
+                        repo = params.get("repo", "dheerajyadav1714/ci_cd")
+                        pr_num = params.get("pr_number")
+                        url = params.get("url", "")
+                        title = params.get("title", "")
+                        
+                        # Parse GitHub URL if provided (e.g. https://github.com/owner/repo/pull/11)
+                        if not pr_num and url:
+                            url_match = re.search(r'github\.com/([^/]+/[^/]+)/pull/(\d+)', url)
+                            if url_match:
+                                repo = url_match.group(1)
+                                pr_num = int(url_match.group(2))
+                        
+                        # Also check if URL was passed in repo field
+                        if "github.com" in repo:
+                            url_match = re.search(r'github\.com/([^/]+/[^/]+)/pull/(\d+)', repo)
+                            if url_match:
+                                repo = url_match.group(1)
+                                pr_num = int(url_match.group(2))
+                            else:
+                                # Extract just owner/repo from GitHub URL
+                                repo_match = re.search(r'github\.com/([^/]+/[^/]+)', repo)
+                                if repo_match:
+                                    repo = repo_match.group(1)
+                        
+                        # If no PR number, search by title
+                        if not pr_num and title:
+                            try:
+                                prs_resp = requests.get(f"{MCP_SERVERS['github']}/prs", params={"repo": repo, "state": "all"}, timeout=30)
+                                if prs_resp.status_code == 200:
+                                    prs = prs_resp.json().get("prs", [])
+                                    for pr in prs:
+                                        if title.lower() in pr.get("title", "").lower():
+                                            pr_num = pr["number"]
+                                            break
+                            except Exception:
+                                pass
+                        
+                        # If still no PR number, get the latest PR
+                        if not pr_num:
+                            try:
+                                prs_resp = requests.get(f"{MCP_SERVERS['github']}/prs", params={"repo": repo, "state": "all"}, timeout=30)
+                                if prs_resp.status_code == 200:
+                                    prs = prs_resp.json().get("prs", [])
+                                    if prs:
+                                        pr_num = prs[0]["number"]
+                                        logger.info(f"Using latest PR #{pr_num}")
+                            except Exception:
+                                pass
+                        
+                        if not pr_num:
+                            result = {"error": "Could not determine PR number. Please specify: 'review PR #18 in dheerajyadav1714/ci_cd'"}
+                            context["pr_review"] = "Could not find PR number"
+                        else:
+                            pr_num = int(pr_num)
+                            parts = repo.split("/")
+                            # Fetch PR details with diff
+                            pr_resp = requests.get(f"{MCP_SERVERS['github']}/pr/{parts[0]}/{parts[1]}/{pr_num}", timeout=30)
+                            logger.info(f"PR fetch status: {pr_resp.status_code}")
+                        
+                            if pr_resp.status_code != 200:
+                                logger.error(f"PR fetch failed: {pr_resp.text[:500]}")
+                                pr_data = {"title": f"PR #{pr_num}", "body": "", "head": "", "base": "main", 
+                                           "changed_files": 0, "additions": 0, "deletions": 0, "files_changed": []}
+                            else:
+                                pr_data = pr_resp.json()
+                            
+                            logger.info(f"PR data keys: {list(pr_data.keys())}, files: {len(pr_data.get('files_changed', []))}, changed_files: {pr_data.get('changed_files', 0)}")
+                            
+                            # Build diff summary
+                            diff_text = ""
+                            for f_info in pr_data.get("files_changed", []):
+                                diff_text += f"\n--- {f_info['filename']} ({f_info['status']}) +{f_info['additions']}/-{f_info['deletions']}\n"
+                                diff_text += f_info.get("patch", "")[:2000] + "\n"
+                            
+                            if not diff_text:
+                                diff_text = "(No diff available — PR may be merged or the GitHub MCP endpoint may not support file diffs)"
+                            
+                            # AI Review
+                            review_prompt = f"""You are a senior code reviewer and security auditor. Review this PR thoroughly.
+
+**PR #{pr_num}: {pr_data.get('title', 'Unknown')}**
+Description: {pr_data.get('body', 'No description')[:500]}
+Branch: {pr_data.get('head', 'unknown')} -> {pr_data.get('base', 'main')}
+Files changed: {pr_data.get('changed_files', 0)} | +{pr_data.get('additions', 0)} -{pr_data.get('deletions', 0)}
+
+**Diff:**
+{diff_text[:4000]}
+
+## Summary
+Brief overview of changes.
+
+## Code Quality
+- Bugs, logic errors, edge cases
+- Code style and best practices
+
+## Security Scan
+Check for ALL of these:
+- CRITICAL: Hardcoded secrets, API keys, passwords, tokens
+- HIGH: SQL injection, XSS, command injection, path traversal
+- MEDIUM: Missing input validation, error info leakage, insecure defaults
+- LOW: Deprecated functions, missing rate limiting
+Report each finding with severity level.
+
+## Suggestions
+Specific improvements with code examples.
+
+## Verdict
+APPROVE, REQUEST_CHANGES, or COMMENT with one-line reason.
+Include SECURITY_SCORE: PASS/FAIL based on findings.
+"""
+                            review_result = await asyncio.to_thread(gemini_model.generate_content, review_prompt)
+                            review_text = review_result.text.strip()
+                            # Post review as PR comment
+                            comment_body = f"## AI Code Review (Gemini)\n\n{review_text}"
+                            try:
+                                requests.post(f"{MCP_SERVERS['github']}/pr/comment", json={
+                                    "repo": repo, "pr_number": pr_num, "body": comment_body
+                                }, timeout=30)
+                                context["pr_review_posted"] = True
+                            except Exception as ce:
+                                logger.error(f"Failed to post PR comment: {ce}")
+                                context["pr_review_posted"] = False
+                            context["pr_review"] = review_text
+                            context["pr_details"] = {
+                                "number": pr_num, "title": pr_data.get("title", "Unknown"),
+                                "files": pr_data.get("changed_files", 0),
+                                "additions": pr_data.get("additions", 0),
+                                "deletions": pr_data.get("deletions", 0)
+                            }
+                            result = {"status": "reviewed", "verdict": review_text[-200:]}
+
+                    # ---------- JENKINS ----------
+                    elif tool == "jenkins" and action == "trigger":
+                        # Use 120s timeout because Jenkins MCP polls for the actual build number
+                        resp = requests.post(f"{MCP_SERVERS['jenkins']}/trigger", json=params, timeout=120)
+                        result = resp.json()
+                        build_number = result.get("build_number")
+                        context["jenkins_trigger"] = result
+
+                        # Double-check with lastfailed endpoint
+                        if build_number:
+                            try:
+                                lf = requests.get(f"{MCP_SERVERS['jenkins']}/lastfailed/{params['job_name']}", timeout=15)
+                                if lf.status_code == 200:
+                                    lf_num = lf.json().get("build_number")
+                                    if lf_num and lf_num > build_number:
+                                        logger.info(f"Correcting build #{build_number} -> #{lf_num}")
+                                        build_number = lf_num
+                                        result["build_number"] = build_number
+                                        context["jenkins_trigger"]["build_number"] = build_number
+                            except Exception:
+                                pass
+
+                        if build_number:
+                            status_url = f"{MCP_SERVERS['jenkins']}/status/{params['job_name']}/{build_number}"
+                            logs_url = f"{MCP_SERVERS['jenkins']}/logs/{params['job_name']}/{build_number}"
+                            finished = False
+                            fix_id = str(uuid.uuid4())
+                            detected_repo = detected_file_path = None
+                            analysis_text = None
+
+                            while not finished:
+                                await asyncio.sleep(10)
+                                try:
+                                    sr = requests.get(status_url, timeout=30)
+                                    if sr.status_code == 200:
+                                        sd = sr.json()
+                                        if not sd.get("building"):
+                                            finished = True
+                                            
+                                            # Record into Natural Language Metrics DB Table
+                                            build_duration = sd.get("duration", 0) / 1000.0  # ms to seconds
+                                            pipeline_id = str(uuid.uuid4())
+                                            try:
+                                                await session.execute(sql_text(
+                                                    "INSERT INTO pipeline_runs (id, job_name, build_number, status, duration, created_at) VALUES (:id, :jn, :bn, :st, :dur, NOW())"
+                                                ), {"id": pipeline_id, "jn": params.get('job_name'), "bn": str(build_number), "st": sd.get("result", "UNKNOWN"), "dur": build_duration})
+                                                await session.commit()
+                                            except Exception as mm_err:
+                                                logger.warning(f"Failed to record pipeline metric: {mm_err}")
+                                                try: await session.rollback()
+                                                except: pass
+
+                                            if sd.get("result") == "FAILURE":
+                                                lr = requests.get(logs_url, timeout=30)
+                                                logs = lr.json().get("logs", "")
+                                                for line in logs.splitlines():
+                                                    if "DEVOPS_AUTO_FIX_REPO_NAME=" in line:
+                                                        detected_repo = line.split("=", 1)[1].strip()
+                                                    elif "DEVOPS_AUTO_FIX_FILE_PATH=" in line:
+                                                        detected_file_path = line.split("=", 1)[1].strip()
+
+                                                similar = await search_similar_incidents(session, logs[-1000:], limit=1)
+                                                
+                                                # Deepmind Confluence RAG implementation
+                                                conf_context = ""
+                                                try:
+                                                    c_resp = requests.get(f"{MCP_SERVERS['confluence']}/search", params={"query": f"Fix Jenkins Build Failure {params.get('job_name')}"}, timeout=10)
+                                                    if c_resp.status_code == 200:
+                                                        res = c_resp.json().get("results", [])
+                                                        if res:
+                                                            c_snips = "\n".join([f"Source ({r['title']}):\n{r['content']}" for r in res])
+                                                            conf_context = f"\n\nInternal Confluence Wiki Results found:\n{c_snips}"
+                                                except Exception as crag_err:
+                                                    logger.warning(f"Confluence RAG failed: {crag_err}")
+
+                                                past_incidents = conf_context
+                                                if similar:
+                                                    past_incidents += "\n**Past similar incidents & solutions from AlloyDB RAG:**\n"
+                                                    for sim in similar:
+                                                        past_incidents += f"- Fix Applied: {sim['fix']}\n"
+                                                        
+                                                analysis_text = await asyncio.to_thread(analyze_failure, logs, past_incidents)
+                                                context["jenkins_failure"] = analysis_text
+                                                confidence = parse_confidence(analysis_text)
+                                                severity = parse_severity(analysis_text)
+                                                context["fix_confidence"] = confidence
+
+                                                await session.execute(sql_text("INSERT INTO pending_fixes (id, fix_text, job_name, build_number, detected_repo, detected_file_path, created_at) VALUES (:id, :ft, :jn, :bn, :r, :fp, NOW())"),
+                                                    {"id": fix_id, "ft": analysis_text, "jn": params['job_name'], "bn": str(build_number), "r": detected_repo, "fp": detected_file_path})
+                                                await session.commit()
+
+                                                # Record incident for MTTR tracking (separate transaction)
+                                                incident_id = str(uuid.uuid4())
+                                                try:
+                                                    await session.execute(sql_text("INSERT INTO incidents (id, job_name, build_number, detected_at, status, confidence_score, severity, detected_repo, fix_id) VALUES (:id, :jn, :bn, NOW(), 'detected', :cs, :sev, :repo, :fid)"),
+                                                        {"id": incident_id, "jn": params['job_name'], "bn": str(build_number), "cs": confidence, "sev": severity, "repo": detected_repo, "fid": fix_id})
+                                                    await session.commit()
+                                                except Exception as inc_err:
+                                                    logger.warning(f"Incident tracking: {inc_err}")
+                                                    try:
+                                                        await session.rollback()
+                                                    except:
+                                                        pass
+
+                                                # Confidence label
+                                                if confidence >= 90:
+                                                    conf_label = "🟢 High confidence — Auto-fix triggered!"
+                                                    slack_analysis = analysis_text[:2500]
+                                                    requests.post(f"{MCP_SERVERS['slack']}/send", json={
+                                                        "channel": SLACK_CHANNEL,
+                                                        "text": f"Build #{build_number} failed. {conf_label}\n\n{slack_analysis}",
+                                                    }, timeout=30)
+                                                    # Run the fix workflow safely using the main event loop's threadpool executor
+                                                    async def run_auto_fix():
+                                                        await asyncio.to_thread(run_fix_workflow, analysis_text, params['job_name'], str(build_number), detected_repo, None, True)
+                                                        # Update DB safely on the main loop
+                                                        try:
+                                                            async with AsyncSessionLocal() as db_s:
+                                                                actual_repo = detected_repo or JOB_REPO_MAP.get(params['job_name'])
+                                                                await db_s.execute(sql_text("UPDATE incidents SET fixed_at = NOW(), status = 'fixed', mttr_seconds = EXTRACT(EPOCH FROM (NOW() - detected_at)) WHERE build_number = :bn AND detected_repo = :repo AND status = 'detected'"), {"bn": str(build_number), "repo": actual_repo})
+                                                                await db_s.commit()
+                                                                
+                                                                # Deepmind Autonomous Loop: Record incident for RAG and create Runbook!
+                                                                await store_incident(db_s, analysis_text, "Auto-merged AI fix.", repo=actual_repo)
+                                                                runbook = await generate_runbook(gemini_model, analysis_text, "Auto-merged AI fix", jira_key="AUTO")
+                                                                if runbook:
+                                                                    rb_id = str(uuid.uuid4())
+                                                                    await db_s.execute(sql_text("INSERT INTO runbooks (id, incident_id, jira_key, title, content, created_at) VALUES (:id, :iid, :jk, :t, :c, NOW())"),
+                                                                        {"id": rb_id, "iid": rb_id, "jk": "AUTO", "t": f"Runbook: Auto-fix {build_number}", "c": runbook})
+                                                                    await db_s.commit()
+                                                                    requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"Knowledge learned! Runbook automatically generated for Build #{build_number}.", "blocks": [{"type": "header", "text": {"type": "plain_text", "text": f"📝 Autonomous Runbook: Build #{build_number}"}}, {"type": "section", "text": {"type": "mrkdwn", "text": runbook[:2500]}}]}, timeout=30)
+                                                                    
+                                                                    # Deepmind Hackathon Integration: Confluence Wiki
+                                                                    try:
+                                                                        conf_resp = requests.post(f"{MCP_SERVERS['confluence']}/pages", json={
+                                                                            "space": "DEVOPS",
+                                                                            "title": f"Troubleshooting Guide: Build #{build_number}",
+                                                                            "content": runbook
+                                                                        }, timeout=30)
+                                                                        if conf_resp.status_code == 200:
+                                                                            conf_url = conf_resp.json().get('url', '')
+                                                                            if conf_url:
+                                                                                requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"📘 Live Confluence Document created successfully!\nRead the full troubleshooting guide here: {conf_url}"}, timeout=30)
+                                                                        else:
+                                                                            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"⚠️ Confluence sync failed (HTTP {conf_resp.status_code}). Please ensure you have created a Confluence space with the Space Key `DEVOPS` in your Atlassian account."}, timeout=30)
+                                                                    except Exception as conf_err:
+                                                                        logger.warning(f"Confluence integration skipped/failed: {conf_err}")
+
+                                                                    # Deepmind Hackathon Integration: Calendar Post-Mortem
+                                                                    try:
+                                                                        from datetime import datetime, timedelta
+                                                                        pm_time = datetime.utcnow() + timedelta(days=1)
+                                                                        # 10:00 AM IST is 04:30 AM UTC
+                                                                        start_str = pm_time.strftime("%Y-%m-%dT04:30:00Z")
+                                                                        end_str = pm_time.strftime("%Y-%m-%dT05:00:00Z")
+                                                                        cal_resp = requests.post(f"{MCP_SERVERS['calendar']}/create-event", json={
+                                                                            "summary": f"Post-Mortem: Jenkins Build #{build_number}",
+                                                                            "description": f"Autonomous Fix detected. Review the fix and Runbook.\n\n{runbook[:500]}...",
+                                                                            "start_time": start_str,
+                                                                            "end_time": end_str
+                                                                        }, timeout=30)
+                                                                        if cal_resp.status_code == 200:
+                                                                            cal_link = cal_resp.json().get('html_link', '')
+                                                                            link_msg = f"\nEvent Link: {cal_link}" if cal_link else ""
+                                                                            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"📅 Notice: A Post-Mortem sync for Build #{build_number} has been autonomously scheduled on the Calendar for tomorrow at 10 AM IST.{link_msg}"}, timeout=30)
+                                                                        else:
+                                                                            logger.warning(f"Calendar event failed: {cal_resp.text}")
+                                                                    except Exception as cal_err:
+                                                                        logger.warning(f"Calendar post-mortem error: {cal_err}")
+                                                        except Exception as mttr_e:
+                                                            logger.warning(f"Auto-fix MTTR update failed: {mttr_e}")
+                                                    
+                                                    asyncio.create_task(run_auto_fix())
+                                                else:
+                                                    if confidence >= 70:
+                                                        conf_label = "🟡 Medium confidence — review suggested"
+                                                    else:
+                                                        conf_label = "🔴 Low confidence — manual investigation needed"
+                                                    
+                                                    # Normal Slack failure notification with Fix button
+                                                    slack_analysis = analysis_text[:2500]
+                                                    requests.post(f"{MCP_SERVERS['slack']}/send", json={
+                                                        "channel": SLACK_CHANNEL,
+                                                        "text": f"Build #{build_number} failed!\n\n{slack_analysis}",
+                                                        "blocks": [
+                                                            {"type": "header", "text": {"type": "plain_text", "text": f"🔴 Build #{build_number} Failed!"}},
+                                                            {"type": "section", "text": {"type": "mrkdwn", "text": slack_analysis}},
+                                                            {"type": "section", "text": {"type": "mrkdwn", "text": f"*Fix Confidence: {confidence}%* — {conf_label}"}},
+                                                            {"type": "actions", "elements": [
+                                                                {"type": "button", "text": {"type": "plain_text", "text": "🔧 Fix it"}, "style": "primary", "value": f"fix|{fix_id}", "action_id": "fix_build"}
+                                                            ]}
+                                                        ]
+                                                    }, timeout=30)
+
+                                            elif sd.get("result") == "SUCCESS":
+                                                context["jenkins_success"] = f"Build #{build_number} succeeded"
+                                                requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"Build #{build_number} succeeded! Job: {params['job_name']}"}, timeout=30)
+                                except Exception as pe:
+                                    logger.error(f"Poll error: {pe}")
+                                    await asyncio.sleep(5)
+
+                    # ---------- SLACK ----------
+                    elif tool == "slack" and action == "send":
+                        slack_text = params.get("text", "")
+                        # Always resolve placeholders when we have context
+                        if context and ("{" in slack_text or "summary" in slack_text.lower() or "step_output" in slack_text):
+                            try:
+                                ctx_sum = {k: str(v)[:500] for k,v in context.items()}
+                                fix_p = f"Rewrite this message using actual data. Remove ALL placeholders/templates. Output ONLY the plain text message.\nOriginal: {slack_text}\nData: {json.dumps(ctx_sum)}\nMessage:"
+                                fixed = await asyncio.to_thread(gemini_model.generate_content, fix_p)
+                                params["text"] = fixed.text.strip()
+                            except Exception:
+                                if "jira_issue" in context:
+                                    ji = context["jira_issue"]
+                                    params["text"] = f"Jira {ji.get('key','')}: {ji.get('summary','')}"
+                        resp = requests.post(f"{MCP_SERVERS['slack']}/send", json=params, timeout=30)
+                        result = resp.json()
+                        context["slack_sent"] = True
+
+                    elif tool == "slack" and action == "send_approval":
+                        params["workflow_id"] = workflow_id
+                        resp = requests.post(f"{MCP_SERVERS['slack']}/send-approval", json=params, timeout=30)
+                        result = resp.json()
+
+                    # ---------- CALENDAR ----------
+                    elif tool == "calendar":
+                        resp = requests.post(f"{MCP_SERVERS['calendar']}/create-event", json=params, timeout=30)
+                        result = resp.json()
+                        context["calendar_event"] = result
+
+                    # ---------- LOG ANALYSIS ----------
+                    elif tool == "log_analysis" and action == "analyze":
+                        raw_log = str(params.get('log') or '')
+                        error_match = re.search(r'\b\w*(?:Error|Exception)\b', raw_log, re.IGNORECASE)
+                        search_term = error_match.group(0) if error_match else raw_log[:15].strip()
+                        
+                        conf_context = ""
+                        try:
+                            # Automatic RAG for manual log analysis!
+                            c_resp = requests.get(f"{MCP_SERVERS['confluence']}/search", params={"query": search_term}, timeout=10)
+                            if c_resp.status_code == 200:
+                                res = c_resp.json().get("results", [])
+                                if res:
+                                    c_snips = "\n".join([f"Source ({r['title']}):\n{r['content']}" for r in res])
+                                    conf_context = f"\n\n--- Internal Confluence Knowledge Base ---\n{c_snips}\n-----------------------------------\nIf this internal knowledge is relevant to the log, prioritize it in your analysis."
+                        except Exception as e:
+                            logger.warning(f"Standalone Log Analysis RAG failed: {e}")
+
+                        la = await asyncio.to_thread(gemini_model.generate_content,
+                            f"Analyse this log. Provide Summary, Root Cause, Suggested Fix, Severity.\nLog: {raw_log}{conf_context}")
+                        context["log_analysis"] = la.text.strip()
+                        result = {"analysis": la.text.strip()}
+
+                    # ---------- RELEASE NOTES GENERATOR ----------
+                    elif tool == "release_notes" and action == "generate":
+                        rn_repo = params.get("repo", "dheerajyadav1714/ci_cd")
+                        rn_version = params.get("version", "Latest")
+                        logger.info(f"Generating release notes for {rn_repo} {rn_version}")
+
+                        # Step 1: Fetch merged PRs from GitHub
+                        pr_data = []
+                        try:
+                            # Use the correct /prs endpoint from our GitHub MCP
+                            pr_resp = requests.get(f"{MCP_SERVERS['github']}/prs", params={"repo": rn_repo, "state": "closed"}, timeout=15)
+                            if pr_resp.status_code == 200:
+                                r2 = pr_resp.json()
+                                pr_data = r2 if isinstance(r2, list) else r2.get("pulls", r2.get("prs", []))
+                                # The MCP already sorts them. Just filter ones with no merged_at or state 'closed'
+                                # Note: the MCP response for /prs might not have merged_at. 
+                                # It returns state "closed". The PRs usually have merged status.
+                                # Let's fetch details to determine if it was merged, or just assume closed PRs are relevant for the hackathon
+                                pr_data = [p for p in pr_data][:15]
+                        except Exception as pr_err:
+                            logger.warning(f"Release notes PR fetch: {pr_err}")
+
+                        # Step 2: Extract Jira ticket keys from PR titles
+                        jira_details = []
+                        jira_keys_found = set()
+                        for pr in pr_data:
+                            title = pr.get("title", "")
+                            keys = re.findall(r'[A-Z]+-\d+', title)
+                            for k in keys:
+                                if k not in jira_keys_found:
+                                    jira_keys_found.add(k)
+                                    try:
+                                        j_resp = requests.get(f"{MCP_SERVERS['jira']}/issue/{k}", timeout=10)
+                                        if j_resp.status_code == 200:
+                                            jira_details.append(j_resp.json())
+                                    except Exception:
+                                        pass
+
+                        # Step 3: Build context for AI
+                        pr_summary = "\n".join([
+                            f"- PR #{p.get('number','?')}: {p.get('title','Untitled')} (merged: {p.get('merged_at','unknown')[:10]})"
+                            for p in pr_data
+                        ]) or "No merged PRs found."
+
+                        jira_summary = "\n".join([
+                            f"- {j.get('key','?')}: {j.get('fields',{}).get('summary', j.get('summary','No summary'))} [{j.get('fields',{}).get('issuetype',{}).get('name', j.get('type','Task'))}]"
+                            for j in jira_details
+                        ]) or "No linked Jira tickets found."
+
+                        # Step 4: Generate release notes with Gemini
+                        rn_prompt = f"""Generate professional, well-structured release notes for software version {rn_version}.
+
+Repository: {rn_repo}
+
+Merged Pull Requests:
+{pr_summary}
+
+Linked Jira Tickets:
+{jira_summary}
+
+Format the release notes with these sections:
+## Release {rn_version}
+### 🚀 New Features
+### 🐛 Bug Fixes
+### 🔧 Improvements
+### 📋 Linked Tickets
+### 👥 Contributors
+
+Be specific. Use the actual PR titles and Jira summaries. Don't invent features that aren't in the data.
+If a section has no items, write "No changes in this category."
+End with a deployment note."""
+
+                        rn_resp = await asyncio.to_thread(gemini_model.generate_content, rn_prompt)
+                        release_notes_text = rn_resp.text.strip()
+                        context["release_notes"] = release_notes_text
+
+                        # Step 5: Publish to Confluence
+                        conf_published = False
+                        try:
+                            conf_resp = requests.post(f"{MCP_SERVERS['confluence']}/pages", json={
+                                "space": "DEVOPS",
+                                "title": f"Release Notes — {rn_version} ({rn_repo.split('/')[-1]})",
+                                "content": release_notes_text
+                            }, timeout=30)
+                            if conf_resp.status_code == 200:
+                                conf_published = True
+                                context["confluence_release_notes"] = conf_resp.json()
+                        except Exception as ce:
+                            logger.warning(f"Release notes Confluence publish failed: {ce}")
+
+                        # Step 6: Notify Slack
+                        try:
+                            slack_msg = f"📦 *Release Notes Published: {rn_version}*\nRepo: `{rn_repo}`\nPRs included: {len(pr_data)}\nJira tickets linked: {len(jira_details)}\nConfluence: {'✅ Published' if conf_published else '⚠️ Not published'}"
+                            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": slack_msg}, timeout=15)
+                        except Exception:
+                            pass
+
+                        result = {"release_notes": release_notes_text, "prs_included": len(pr_data), "jira_tickets_linked": len(jira_details), "confluence_published": conf_published}
+
+                    # ---------- RAG ----------
+                    elif tool == "rag" and action == "search":
+                        try:
+                            similar = await search_similar_incidents(session, params.get("query", ""))
+                        except Exception:
+                            similar = []
+                        context["rag_results"] = similar
+                        if similar:
+                            result = {"incidents": similar, "count": len(similar), "message": f"Found {len(similar)} similar past incidents"}
+                        else:
+                            result = {"incidents": [], "count": 0, "message": "No similar past incidents found yet. The system learns from each resolved fix."}
+
+                    elif tool == "rag" and action == "runbooks":
+                        try:
+                            rb_result = await session.execute(sql_text(
+                                "SELECT id, jira_key, title, content FROM runbooks ORDER BY created_at DESC LIMIT 10"))
+                            runbooks = [{"id": r[0], "jira": r[1], "title": r[2], "content": r[3][:500]} for r in rb_result.fetchall()]
+                            context["runbooks"] = runbooks
+                            result = {"runbooks": runbooks}
+                        except Exception as rb_err:
+                            logger.error(f"Runbooks query failed: {rb_err}")
+                            context["runbooks"] = []
+                            result = {"runbooks": []}
+
+                    # ---------- DATABASE ----------
+                    elif tool == "database" and action == "query":
+                        sql_prompt = f"""Write a PostgreSQL query for AlloyDB given this schema:
+incidents (id TEXT, job_name TEXT, build_number TEXT, detected_at TIMESTAMP, fixed_at TIMESTAMP, mttr_seconds FLOAT, status TEXT, confidence_score INTEGER, severity TEXT, detected_repo TEXT, fix_id TEXT)
+pending_fixes (id TEXT, fix_text TEXT, job_name TEXT, build_number TEXT, detected_repo TEXT, detected_file_path TEXT, created_at TIMESTAMP)
+runbooks (id TEXT, incident_id TEXT, jira_key TEXT, title TEXT, content TEXT, created_at TIMESTAMP)
+pipeline_runs (id TEXT, job_name TEXT, build_number TEXT, status TEXT, duration FLOAT, created_at TIMESTAMP)
+
+User request: {params['question']}
+
+Return ONLY the raw SQL query string. No Markdown formatting, no code blocks (e.g. no ```sql), and no comments."""
+                        sql_resp = await asyncio.to_thread(gemini_model.generate_content, sql_prompt)
+                        raw_sql = sql_resp.text.strip().replace("```sql", "").replace("```", "").strip()
+                        
+                        try:
+                            async with AsyncSessionLocal() as db_session:
+                                r = await db_session.execute(sql_text(raw_sql))
+                                headers = list(r.keys())
+                                data_rows = [[str(col) for col in row] for row in r.fetchall()]
+                                if data_rows:
+                                    md = "| " + " | ".join(headers) + " |\n| " + " | ".join(["---"]*len(headers)) + " |\n"
+                                    for row in data_rows:
+                                        md += "| " + " | ".join(row) + " |\n"
+                                    context["db_result"] = f"**SQL:** `{raw_sql}`\n\n{md}"
+                                else:
+                                    context["db_result"] = f"**SQL:** `{raw_sql}`\nNo results."
+                                result = {"sql": raw_sql, "status": "success"}
+                        except Exception as sql_err:
+                            context["db_result"] = f"**SQL:** `{raw_sql}`\nError: {sql_err}"
+                            result = {"sql": raw_sql, "error": str(sql_err)}
+
+                except Exception as e:
+                    logger.error(f"Step {tool}.{action} failed: {e}")
+                    result = {"error": str(e)}
+                    context[f"{tool}_error"] = str(e)
+
+                step_results.append(result)
+                steps[idx]["result"] = result  # Attach result to the live plan
+                
+                try:
+                    # Update the live plan in DB after EACH step so the UI shows results immediately
+                    await session.execute(sql_text("UPDATE workflows SET plan = :plan WHERE id = :id"),
+                        {"plan": json.dumps(steps), "id": workflow_id})
+                    
+                    await session.execute(sql_text("INSERT INTO tool_calls (id, workflow_id, agent_name, tool_name, params, result, status, started_at, finished_at) VALUES (gen_random_uuid(), :wfid, 'orchestrator', :tool, :params, :result, 'completed', NOW(), NOW())"),
+                        {"wfid": workflow_id, "tool": f"{tool}.{action}", "params": json.dumps(params), "result": json.dumps(str(result)[:5000])})
+                    await session.commit()
+                except Exception as db_err:
+                    logger.warning(f"Tool call logging/update failed: {db_err}")
+                    await session.rollback()
+
+            # ===== PASS 2: GENERATE REPLY WITH REAL DATA =====
+            # Truncate large content for the reply prompt (increased limit to 10k)
+            reply_context = {}
+            for k, v in context.items():
+                s = json.dumps(v) if isinstance(v, (dict, list)) else str(v)
+                reply_context[k] = s[:10000] if len(s) > 10000 else s
+
+            reply_prompt = f"""You are a DevOps assistant. The user asked: "{user_request}"
+
+The following actions were executed and here is the data collected:
+{json.dumps(reply_context, indent=2)}
+
+Generate a helpful, well-formatted reply using markdown. Rules:
+- Show actual data values, not placeholders
+- Use tables for lists of tickets/PRs/branches
+- Use code blocks for file contents
+- Be concise but complete
+- If there was an error, explain it clearly
+"""
+            try:
+                reply_response = await asyncio.to_thread(gemini_model.generate_content, reply_prompt)
+                reply_text = reply_response.text.strip()
+            except Exception as e:
+                logger.error(f"Reply generation failed: {e}")
+                reply_text = f"Actions completed. Raw data:\n```json\n{json.dumps(reply_context, indent=2)[:2000]}\n```"
+
+            # Build final plan with the reply
+            final_steps = steps + [{"tool": "reply", "action": "send", "params": {"text": reply_text}}]
+
+            await session.execute(sql_text("UPDATE workflows SET status='completed', plan=:plan WHERE id=:id"),
+                {"plan": json.dumps(final_steps), "id": workflow_id})
+            await session.commit()
+            
+            # Autonomously save the AI's reply to the chat history DB.
+            # This ensures we never lose responses if the UI drops the connection!
+            try:
+                await session.execute(sql_text(
+                    "INSERT INTO chat_messages (user_id, role, content, created_at) VALUES ('ui_user', 'assistant', :content, NOW())"
+                ), {"content": reply_text})
+                await session.commit()
+            except Exception as e:
+                logger.warning(f"Failed to persist chat message: {e}")
+                
+            logger.info(f"Workflow {workflow_id} completed")
+
+    except Exception as e:
+        logger.exception(f"Workflow failed: {e}")
+        async with AsyncSessionLocal() as session:
+            await session.execute(sql_text("UPDATE workflows SET status='failed', plan=:plan WHERE id=:id"),
+                {"plan": json.dumps([{"tool": "reply", "action": "send", "params": {"text": f"Error: {str(e)}"}}]), "id": workflow_id})
+            await session.commit()
+
+
+# ========== SLACK INTERACTIVE ==========
+@app.post("/slack/interactive")
+async def slack_interactive(request: Request, background_tasks: BackgroundTasks):
+    form = await request.form()
+    payload = json.loads(form["payload"])
+    action_id = payload["actions"][0]["action_id"]
+    action_value = payload["actions"][0]["value"]
+
+    if action_id == "fix_build":
+        fix_id = action_value.split("|")[1]
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(sql_text("SELECT fix_text, job_name, build_number, detected_repo, detected_file_path FROM pending_fixes WHERE id = :id"), {"id": fix_id})
+            row = result.first()
+        if not row:
+            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": "Fix not found. Re-trigger build."}, timeout=30)
+            return {"status": "error"}
+        async with AsyncSessionLocal() as session:
+            await session.execute(sql_text("DELETE FROM pending_fixes WHERE id = :id"), {"id": fix_id})
+            await session.commit()
+        background_tasks.add_task(run_fix_workflow, row[0], row[1], row[2], row[3], row[4])
+        requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": "Fix workflow initiated! Working on it..."}, timeout=30)
+        return {"status": "accepted"}
+
+    elif action_id in ["approve_pr", "reject_pr"]:
+        parts = action_value.split("|")
+        background_tasks.add_task(process_approval, parts[0], int(parts[2]), parts[3], parts[4], parts[5], parts[1])
+        return {"status": "accepted"}
+
+    return {"status": "ignored"}
+
+
+def run_workflow_sync(workflow_id: str, request: str, user_id: str):
+    # Completely isolate heavy MCP request logic from Uvicorn by spinning up a new OS-level thread
+    # and a dedicated asyncio event loop.
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    async def init_and_run():
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(sql_text("INSERT INTO workflows (id, user_id, request, status, created_at) VALUES (:id, :u, :r, 'running', NOW())"),
+                    {"id": workflow_id, "u": user_id, "r": request})
+                await session.commit()
+        except Exception as e:
+            logger.error(f"Failed to init workflow {workflow_id} in DB: {e}")
+        
+        await execute_workflow_async(workflow_id, request)
+        
+        # Wait for ALL background tasks (e.g. run_auto_fix) to complete
+        # before closing the loop. Without this, Confluence/Calendar/Runbook
+        # tasks get killed mid-execution.
+        pending = [t for t in asyncio.all_tasks(loop) if t is not asyncio.current_task()]
+        if pending:
+            logger.info(f"Waiting for {len(pending)} background tasks to complete...")
+            await asyncio.gather(*pending, return_exceptions=True)
+            logger.info("All background tasks completed.")
+    
+    try:
+        loop.run_until_complete(init_and_run())
+    finally:
+        loop.close()
+
+@app.post("/run")
+async def run_workflow(req: WorkflowRequest):
+    workflow_id = str(uuid.uuid4())
+    
+    # Detach entirely from the ASGI thread!
+    t = threading.Thread(target=run_workflow_sync, args=(workflow_id, req.request, req.user_id))
+    t.start()
+    
+    return {"workflow_id": workflow_id, "status": "running"}
+
+@app.get("/workflow/{workflow_id}")
+async def get_workflow(workflow_id: str):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(sql_text("SELECT status, plan FROM workflows WHERE id = :id"), {"id": workflow_id})
+        row = result.first()
+        if not row: return {"status": "not_found"}
+        return {"status": row[0], "plan": row[1]}
+
+@app.get("/debug/db")
+async def debug_db():
+    try:
+        async with AsyncSessionLocal() as session:
+            counts = {}
+            for table in ["workflows", "tool_calls", "pending_fixes", "runbooks", "incidents"]:
+                try:
+                    r = await session.execute(sql_text(f"SELECT count(*) FROM {table}"))
+                    counts[table] = r.scalar()
+                except:
+                    counts[table] = "N/A"
+            try:
+                r = await session.execute(sql_text("SELECT count(*) FROM incident_embeddings"))
+                counts["incident_embeddings"] = r.scalar()
+            except:
+                counts["incident_embeddings"] = "N/A"
+            return counts
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ========== WEBHOOK: Jenkins Auto-Detection ==========
+@app.post("/webhook/jenkins")
+async def jenkins_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Jenkins calls this on build completion — enables zero-touch remediation"""
+    try:
+        data = await request.json()
+        job_name = data.get("name") or data.get("job_name", "test-pipeline")
+        build_number = data.get("build", {}).get("number") or data.get("build_number")
+        build_status = data.get("build", {}).get("status") or data.get("status", "")
+        build_url = data.get("build", {}).get("full_url", "")
+        duration_ms = data.get("build", {}).get("duration", 0)
+        duration_sec = duration_ms / 1000.0 if duration_ms else 0.0
+
+        # Save pipeline run dynamically
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(sql_text("INSERT INTO pipeline_runs (id, job_name, build_number, status, duration) VALUES (:id, :j, :b, :s, :d)"),
+                    {"id": str(uuid.uuid4()), "j": str(job_name), "b": str(build_number), "s": build_status.upper() if build_status else "UNKNOWN", "d": duration_sec})
+                await session.commit()
+        except Exception as e:
+            logger.warning(f"Failed to record pipeline_runs: {e}")
+
+        logger.info(f"Webhook: {job_name} #{build_number} -> {build_status}")
+
+        if build_status.upper() in ["FAILURE", "FAILED"]:
+            # Trigger the full analysis workflow
+            background_tasks.add_task(
+                execute_workflow_async,
+                str(uuid.uuid4()),
+                f"Jenkins build {job_name} #{build_number} failed. Analyze the failure, notify slack, and prepare a fix."
+            )
+            return {"status": "processing", "message": f"Analyzing failure for {job_name} #{build_number}"}
+
+        return {"status": "ok", "message": f"Build {build_status} — no action needed"}
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return {"status": "error", "detail": str(e)}
+
+
+# ========== METRICS API ==========
+@app.get("/metrics")
+async def get_metrics():
+    """Returns MTTR and incident metrics for the dashboard"""
+    try:
+        async with AsyncSessionLocal() as session:
+            metrics = {}
+
+            # Total incidents
+            try:
+                r = await session.execute(sql_text("SELECT count(*) FROM incidents"))
+                metrics["total_incidents"] = r.scalar() or 0
+            except:
+                metrics["total_incidents"] = 0
+
+            # Fixed incidents
+            try:
+                r = await session.execute(sql_text("SELECT count(*) FROM incidents WHERE status = 'fixed'"))
+                metrics["fixed_incidents"] = r.scalar() or 0
+            except:
+                metrics["fixed_incidents"] = 0
+
+            # Average MTTR
+            try:
+                r = await session.execute(sql_text("SELECT AVG(mttr_seconds) FROM incidents WHERE mttr_seconds IS NOT NULL"))
+                avg = r.scalar()
+                metrics["avg_mttr_seconds"] = round(float(avg), 1) if avg else None
+            except:
+                metrics["avg_mttr_seconds"] = None
+
+            # Min/Max MTTR
+            try:
+                r = await session.execute(sql_text("SELECT MIN(mttr_seconds), MAX(mttr_seconds) FROM incidents WHERE mttr_seconds IS NOT NULL"))
+                row = r.first()
+                metrics["min_mttr"] = round(float(row[0]), 1) if row and row[0] else None
+                metrics["max_mttr"] = round(float(row[1]), 1) if row and row[1] else None
+            except:
+                metrics["min_mttr"] = metrics["max_mttr"] = None
+
+            # Avg confidence
+            try:
+                r = await session.execute(sql_text("SELECT AVG(confidence_score) FROM incidents WHERE confidence_score IS NOT NULL"))
+                avg_conf = r.scalar()
+                metrics["avg_confidence"] = round(float(avg_conf), 1) if avg_conf else None
+            except:
+                metrics["avg_confidence"] = None
+
+            # Fix success rate
+            if metrics["total_incidents"] > 0:
+                metrics["fix_rate_pct"] = round(metrics["fixed_incidents"] / metrics["total_incidents"] * 100, 1)
+            else:
+                metrics["fix_rate_pct"] = 0
+
+            # Recent incidents
+            try:
+                r = await session.execute(sql_text(
+                    "SELECT id, job_name, build_number, detected_at, fixed_at, mttr_seconds, status, confidence_score, severity "
+                    "FROM incidents ORDER BY detected_at DESC LIMIT 10"
+                ))
+                incidents = []
+                for row in r.fetchall():
+                    incidents.append({
+                        "id": row[0], "job": row[1], "build": row[2],
+                        "detected_at": row[3].isoformat() if row[3] else None,
+                        "fixed_at": row[4].isoformat() if row[4] else None,
+                        "mttr_seconds": round(float(row[5]), 1) if row[5] else None,
+                        "status": row[6], "confidence": row[7], "severity": row[8]
+                    })
+                metrics["recent_incidents"] = incidents
+            except:
+                metrics["recent_incidents"] = []
+
+            # Total workflows
+            try:
+                r = await session.execute(sql_text("SELECT count(*) FROM workflows"))
+                metrics["total_workflows"] = r.scalar() or 0
+            except:
+                metrics["total_workflows"] = 0
+
+            # Runbooks count
+            try:
+                r = await session.execute(sql_text("SELECT count(*) FROM runbooks"))
+                metrics["total_runbooks"] = r.scalar() or 0
+            except:
+                metrics["total_runbooks"] = 0
+
+            # RAG incidents
+            try:
+                r = await session.execute(sql_text("SELECT count(*) FROM incident_embeddings"))
+                metrics["rag_incidents"] = r.scalar() or 0
+            except:
+                metrics["rag_incidents"] = 0
+
+            # Pipeline Runs
+            try:
+                r = await session.execute(sql_text("SELECT count(*) FROM pipeline_runs"))
+                metrics["total_pipelines"] = r.scalar() or 0
+                
+                r2 = await session.execute(sql_text("SELECT count(*) FROM pipeline_runs WHERE status = 'SUCCESS'"))
+                metrics["passed_pipelines"] = r2.scalar() or 0
+
+                r3 = await session.execute(sql_text("SELECT count(*) FROM pipeline_runs WHERE status IN ('FAILURE', 'FAILED')"))
+                metrics["failed_pipelines"] = r3.scalar() or 0
+            except:
+                metrics["total_pipelines"] = metrics["passed_pipelines"] = metrics["failed_pipelines"] = 0
+
+            # Auto-Merged Fixes Count
+            try:
+                r = await session.execute(sql_text("SELECT count(*) FROM incidents WHERE status = 'fixed' AND confidence_score >= 90"))
+                metrics["auto_merged"] = r.scalar() or 0
+            except:
+                metrics["auto_merged"] = 0
+
+            return metrics
+    except Exception as e:
+        return {"error": str(e)}
+
+# ========== CHAT PERSISTENCE ==========
+@app.post("/messages")
+async def save_message(request: Request):
+    """Save a chat message for persistence"""
+    try:
+        data = await request.json()
+        async with AsyncSessionLocal() as session:
+            await session.execute(sql_text(
+                "INSERT INTO chat_messages (user_id, role, content, created_at) VALUES (:uid, :role, :content, NOW())"
+            ), {"uid": data.get("user_id", "ui_user"), "role": data["role"], "content": data["content"]})
+            await session.commit()
+        return {"status": "saved"}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/messages")
+async def get_messages(user_id: str = "ui_user", limit: int = 50):
+    """Get recent chat messages"""
+    try:
+        async with AsyncSessionLocal() as session:
+            r = await session.execute(sql_text(
+                "SELECT role, content, created_at FROM chat_messages WHERE user_id = :uid ORDER BY created_at DESC LIMIT :lim"
+            ), {"uid": user_id, "lim": limit})
+            messages = [{"role": row[0], "content": row[1]} for row in reversed(r.fetchall())]
+            return {"messages": messages}
+    except Exception as e:
+        return {"messages": [], "error": str(e)}
+
+@app.delete("/messages")
+async def clear_messages(user_id: str = "ui_user"):
+    """Clear chat history"""
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(sql_text("DELETE FROM chat_messages WHERE user_id = :uid"), {"uid": user_id})
+            await session.commit()
+        return {"status": "cleared"}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
