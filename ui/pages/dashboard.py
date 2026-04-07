@@ -128,11 +128,11 @@ with left:
             if inc.get("mttr_seconds"):
                 secs = inc["mttr_seconds"]
                 if secs < 60:
-                    mttr_text = f" | MTTR: **{secs:.0f}s**"
+                    mttr_text = f" | MTTR: <b>{secs:.0f}s</b>"
                 else:
-                    mttr_text = f" | MTTR: **{secs/60:.1f}min**"
+                    mttr_text = f" | MTTR: <b>{secs/60:.1f}min</b>"
             
-            conf_text = f" | Confidence: **{inc['confidence']}%**" if inc.get("confidence") else ""
+            conf_text = f" | Confidence: <b>{inc['confidence']}%</b>" if inc.get("confidence") else ""
             # IST Conversion (+5:30)
             detected_dt = datetime.fromisoformat(inc.get("detected_at").replace("Z", "+00:00")) if inc.get("detected_at") else None
             if detected_dt:
