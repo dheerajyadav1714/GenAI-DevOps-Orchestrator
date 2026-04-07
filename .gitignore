@@ -32,7 +32,7 @@ env.bak/
 venv.bak/
 
 # Project Specific
-.streamlit/
+.streamlit/secrets.toml
 secrets/
 *.pem
 *.key
