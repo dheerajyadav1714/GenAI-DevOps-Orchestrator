@@ -4,7 +4,7 @@ import Sidebar from "./components/Sidebar";
 import ChatMessage from "./components/ChatMessage";
 import MetricsPanel from "./components/MetricsPanel";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = "https://devops-orchestrator-v2-688623456290.us-central1.run.app";
 
 export default function Home() {
   const [messages, setMessages] = useState([]);
@@ -99,20 +99,18 @@ export default function Home() {
   ];
   return (
     <div className="flex h-screen overflow-hidden bg-white">
-      <Sidebar metrics={metrics} />
+      <Sidebar onNewChat={() => setMessages([])} />
 
-      <main className="flex-1 flex flex-col relative z-10 bg-[#f8fafc] m-2 rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+      <main className="flex-1 flex flex-col relative z-10 bg-white">
         {/* Header */}
         <header
-          className="flex items-center justify-between px-6 h-14 shrink-0"
-          style={{ borderBottom: "1px solid var(--border)", background: "rgba(9,9,11,0.8)", backdropFilter: "blur(12px)" }}
+          className="flex items-center justify-between px-6 h-14 shrink-0 bg-white border-b border-gray-100"
         >
           <div className="flex items-center gap-3">
-            <div className="w-2 h-2 rounded-full" style={{ background: "var(--success)" }} />
-            <h1 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-              GenAI DevOps Orchestrator
+            <h1 className="text-sm font-bold text-slate-800">
+              DevOps Orchestrator
             </h1>
-            <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "var(--accent-dim)", color: "var(--accent-light)", fontSize: "0.65rem" }}>
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 uppercase tracking-widest">
               v2.0
             </span>
           </div>
@@ -194,21 +192,22 @@ export default function Home() {
 
             {/* Input */}
             {/* Floating Input Pill Box */}
-            <div className="px-6 pb-6 pt-4 shrink-0 mt-auto bg-gradient-to-t from-[var(--bg-app)] via-[var(--bg-app)] to-transparent">
+            <div className="px-6 pb-6 pt-4 shrink-0 mt-auto bg-gradient-to-t from-white to-transparent">
               <form onSubmit={sendMessage} className="max-w-3xl mx-auto">
-                <div className="chat-input-container flex items-center">
+                <div className="flex items-center bg-[#f4f4f5] border border-gray-200 shadow-sm rounded-full pl-5 pr-2 py-2">
                   <input
                     type="text"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    placeholder="Describe the objective you want to achieve..."
+                    placeholder="Message DevOps AI..."
                     disabled={isLoading}
-                    className="flex-1 chat-input py-3"
+                    className="flex-1 bg-transparent border-none outline-none text-[15px] text-slate-800 placeholder-slate-500 py-1"
                   />
                   <button
                     type="submit"
                     disabled={isLoading || !input.trim()}
-                    className="btn-liquid-blue w-10 h-10 rounded-full flex items-center justify-center shrink-0 ml-2"
+                    className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 ml-3 transition-colors text-white disabled:opacity-40"
+                    style={{ background: input.trim() ? "#000000" : "#d1d5db" }}
                   >
                     {isLoading ? <span className="text-xs text-white">...</span> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>}
                   </button>
