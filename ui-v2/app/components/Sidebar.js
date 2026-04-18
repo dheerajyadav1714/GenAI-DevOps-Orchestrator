@@ -22,11 +22,6 @@ export default function Sidebar({ metrics }) {
           New Chat
         </button>
       </div>
-        <div>
-          <div className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>DevOps AI</div>
-          <div className="text-xs" style={{ color: "var(--text-muted)", fontSize: "0.6rem" }}>Autonomous Platform</div>
-        </div>
-      </div>
 
       {/* Navigation */}
       <div className="px-3 py-3 flex-1 overflow-y-auto">
