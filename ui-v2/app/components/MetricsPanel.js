@@ -3,138 +3,102 @@
 export default function MetricsPanel({ metrics }) {
   if (!metrics) {
     return (
-      <div
-        className="w-80 shrink-0 p-4 overflow-y-auto"
-        style={{ borderLeft: "1px solid var(--border)", background: "var(--bg-secondary)" }}
-      >
-        <p className="text-sm" style={{ color: "var(--text-muted)" }}>Loading metrics...</p>
+      <div className="w-72 shrink-0 p-4 overflow-y-auto" style={{ borderLeft: "1px solid var(--border)", background: "var(--bg-secondary)" }}>
+        <div className="space-y-3">
+          {[1,2,3].map(i => <div key={i} className="shimmer h-24 rounded-xl" />)}
+        </div>
       </div>
     );
   }
 
-  const mttrMinutes = metrics.avg_mttr_seconds
-    ? (metrics.avg_mttr_seconds / 60).toFixed(1)
-    : "—";
-
+  const mttr = metrics.avg_mttr_seconds ? (metrics.avg_mttr_seconds / 60).toFixed(1) : "—";
   const fixRate = metrics.fix_rate_pct || 0;
 
   return (
-    <div
-      className="w-80 shrink-0 overflow-y-auto p-4 space-y-4"
-      style={{ borderLeft: "1px solid var(--border)", background: "var(--bg-secondary)" }}
-    >
+    <div className="w-72 shrink-0 overflow-y-auto p-4 space-y-3" style={{ borderLeft: "1px solid var(--border)", background: "var(--bg-secondary)" }}>
       {/* Title */}
-      <div>
-        <h2 className="text-sm font-bold glow-text">DORA Metrics Dashboard</h2>
-        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
-          Real-time performance tracking
-        </p>
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-xs font-bold gradient-text uppercase tracking-wider">DORA Metrics</h2>
+        <span className="w-1.5 h-1.5 rounded-full status-live" style={{ background: "var(--success)" }} />
       </div>
 
-      {/* MTTR Card */}
-      <MetricCard
-        label="Mean Time to Repair"
-        value={`${mttrMinutes} min`}
-        subtitle="Average across all incidents"
-        color="var(--accent)"
-        icon="⏱️"
-      />
+      {/* MTTR */}
+      <div className="surface rounded-xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>Mean Time to Repair</span>
+          <span className="text-xs">⏱️</span>
+        </div>
+        <div className="metric-number gradient-text">{mttr}<span className="text-sm font-normal" style={{ WebkitTextFillColor: "var(--text-muted)" }}> min</span></div>
+      </div>
 
-      {/* Fix Rate Card */}
-      <MetricCard
-        label="Auto-Fix Success Rate"
-        value={`${fixRate}%`}
-        subtitle={`${metrics.fixed_incidents || 0} of ${metrics.total_incidents || 0} incidents`}
-        color="var(--success)"
-        icon="✅"
-      >
-        {/* Progress Bar */}
-        <div className="mt-3 w-full h-2 rounded-full" style={{ background: "rgba(99, 102, 241, 0.1)" }}>
+      {/* Fix Rate */}
+      <div className="surface rounded-xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>Auto-Fix Rate</span>
+          <span className="text-xs font-bold" style={{ color: "var(--success)" }}>{fixRate}%</span>
+        </div>
+        <div className="w-full h-1.5 rounded-full" style={{ background: "var(--bg-primary)" }}>
           <div
-            className="h-2 rounded-full transition-all duration-1000"
+            className="h-1.5 rounded-full transition-all duration-1000"
             style={{
               width: `${Math.min(fixRate, 100)}%`,
-              background: "linear-gradient(90deg, var(--gradient-start), var(--success))",
+              background: "linear-gradient(90deg, #7c3aed, #22c55e)",
             }}
           />
         </div>
-      </MetricCard>
+        <div className="flex justify-between mt-2">
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>{metrics.fixed_incidents || 0} fixed</span>
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>{metrics.total_incidents || 0} total</span>
+        </div>
+      </div>
 
       {/* Pipeline Stats */}
-      <MetricCard
-        label="Pipeline Runs"
-        value={metrics.total_pipelines || 0}
-        color="var(--warning)"
-        icon="🔄"
-      >
-        <div className="flex gap-4 mt-3">
-          <MiniStat label="Passed" value={metrics.passed_pipelines || 0} color="var(--success)" />
-          <MiniStat label="Failed" value={metrics.failed_pipelines || 0} color="var(--danger)" />
-          <MiniStat label="Auto-Merged" value={metrics.auto_merged || 0} color="var(--accent)" />
+      <div className="surface rounded-xl p-4">
+        <div className="text-xs font-medium mb-3" style={{ color: "var(--text-muted)" }}>Pipeline Runs</div>
+        <div className="grid grid-cols-3 gap-2">
+          <MiniBlock label="Total" value={metrics.total_pipelines || 0} color="var(--text-primary)" />
+          <MiniBlock label="Pass" value={metrics.passed_pipelines || 0} color="var(--success)" />
+          <MiniBlock label="Fail" value={metrics.failed_pipelines || 0} color="var(--danger)" />
         </div>
-      </MetricCard>
+      </div>
 
-      {/* Confidence Score */}
-      <MetricCard
-        label="Avg AI Confidence"
-        value={metrics.avg_confidence ? `${metrics.avg_confidence}%` : "—"}
-        subtitle="Gemini diagnosis accuracy"
-        color="var(--gradient-end)"
-        icon="🧠"
-      />
+      {/* AI Confidence */}
+      <div className="surface rounded-xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>AI Confidence</span>
+          <span className="text-xs">🧠</span>
+        </div>
+        <div className="metric-number" style={{ color: "var(--accent-light)" }}>
+          {metrics.avg_confidence || "—"}<span className="text-sm font-normal" style={{ color: "var(--text-muted)" }}>%</span>
+        </div>
+      </div>
 
       {/* Knowledge Base */}
-      <div className="glass-card p-4">
-        <div className="text-xs font-semibold mb-3" style={{ color: "var(--text-muted)" }}>
-          Knowledge Base
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <KBStat label="RAG Incidents" value={metrics.rag_incidents || 0} icon="🔍" />
-          <KBStat label="Runbooks" value={metrics.total_runbooks || 0} icon="📝" />
-          <KBStat label="Workflows" value={metrics.total_workflows || 0} icon="⚡" />
-          <KBStat
-            label="MTTR Range"
-            value={
-              metrics.min_mttr && metrics.max_mttr
-                ? `${(metrics.min_mttr / 60).toFixed(0)}-${(metrics.max_mttr / 60).toFixed(0)}m`
-                : "—"
-            }
-            icon="📊"
-          />
+      <div className="surface rounded-xl p-4">
+        <div className="text-xs font-medium mb-3" style={{ color: "var(--text-muted)" }}>Knowledge Base</div>
+        <div className="grid grid-cols-2 gap-2">
+          <KBBlock label="RAG" value={metrics.rag_incidents || 0} icon="🔍" />
+          <KBBlock label="Runbooks" value={metrics.total_runbooks || 0} icon="📝" />
+          <KBBlock label="Workflows" value={metrics.total_workflows || 0} icon="⚡" />
+          <KBBlock label="Merged" value={metrics.auto_merged || 0} icon="✅" />
         </div>
       </div>
 
       {/* Recent Incidents */}
-      {metrics.recent_incidents && metrics.recent_incidents.length > 0 && (
-        <div className="glass-card p-4">
-          <div className="text-xs font-semibold mb-3" style={{ color: "var(--text-muted)" }}>
-            Recent Incidents
-          </div>
-          <div className="space-y-2">
-            {metrics.recent_incidents.slice(0, 5).map((inc, i) => (
-              <div
-                key={i}
-                className="flex items-center justify-between px-2 py-2 rounded-lg text-xs"
-                style={{ background: "rgba(99, 102, 241, 0.04)" }}
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className="w-2 h-2 rounded-full"
-                    style={{
-                      background: inc.status === "fixed" ? "var(--success)" : "var(--danger)",
-                    }}
-                  />
-                  <span style={{ color: "var(--text-secondary)" }}>
+      {metrics.recent_incidents?.length > 0 && (
+        <div className="surface rounded-xl p-4">
+          <div className="text-xs font-medium mb-2.5" style={{ color: "var(--text-muted)" }}>Recent Incidents</div>
+          <div className="space-y-1.5">
+            {metrics.recent_incidents.slice(0, 4).map((inc, i) => (
+              <div key={i} className="flex items-center justify-between py-1.5 px-2 rounded-lg" style={{ background: "var(--bg-primary)" }}>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: inc.status === "fixed" ? "var(--success)" : "var(--danger)" }} />
+                  <span className="text-xs font-mono" style={{ color: "var(--text-secondary)", fontSize: "0.65rem" }}>
                     {inc.job || "—"} #{inc.build || "—"}
                   </span>
                 </div>
-                <span
-                  className="font-mono"
-                  style={{
-                    color: inc.status === "fixed" ? "var(--success)" : "var(--warning)",
-                  }}
-                >
-                  {inc.mttr_seconds ? `${(inc.mttr_seconds / 60).toFixed(1)}m` : "pending"}
+                <span className="text-xs font-mono font-bold" style={{ color: inc.status === "fixed" ? "var(--success)" : "var(--warning)", fontSize: "0.65rem" }}>
+                  {inc.mttr_seconds ? `${(inc.mttr_seconds / 60).toFixed(1)}m` : "..."}
                 </span>
               </div>
             ))}
@@ -145,50 +109,21 @@ export default function MetricsPanel({ metrics }) {
   );
 }
 
-function MetricCard({ label, value, subtitle, color, icon, children }) {
+function MiniBlock({ label, value, color }) {
   return (
-    <div className="glass-card p-4">
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>
-          {icon} {label}
-        </span>
-      </div>
-      <div className="metric-value" style={{ color }}>
-        {value}
-      </div>
-      {subtitle && (
-        <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-          {subtitle}
-        </p>
-      )}
-      {children}
+    <div className="text-center py-2 rounded-lg" style={{ background: "var(--bg-primary)" }}>
+      <div className="text-sm font-bold font-mono" style={{ color }}>{value}</div>
+      <div className="text-xs mt-0.5" style={{ color: "var(--text-muted)", fontSize: "0.6rem" }}>{label}</div>
     </div>
   );
 }
 
-function MiniStat({ label, value, color }) {
+function KBBlock({ label, value, icon }) {
   return (
-    <div className="text-center">
-      <div className="text-lg font-bold" style={{ color }}>
-        {value}
-      </div>
-      <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-        {label}
-      </div>
-    </div>
-  );
-}
-
-function KBStat({ label, value, icon }) {
-  return (
-    <div className="text-center py-2 rounded-lg" style={{ background: "rgba(99, 102, 241, 0.04)" }}>
-      <div className="text-sm">{icon}</div>
-      <div className="text-sm font-bold mt-0.5" style={{ color: "var(--text-primary)" }}>
-        {value}
-      </div>
-      <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-        {label}
-      </div>
+    <div className="text-center py-2 rounded-lg" style={{ background: "var(--bg-primary)" }}>
+      <div style={{ fontSize: "0.7rem" }}>{icon}</div>
+      <div className="text-xs font-bold mt-0.5 font-mono" style={{ color: "var(--text-primary)" }}>{value}</div>
+      <div style={{ color: "var(--text-muted)", fontSize: "0.55rem" }}>{label}</div>
     </div>
   );
 }
