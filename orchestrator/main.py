@@ -449,9 +449,11 @@ Available tools:
 - slack.send: {{"text": "message"}}
 - calendar.create_event: {{"summary": "Meeting", "start_time": "2026-04-03T10:00:00", "end_time": "2026-04-03T11:00:00"}}
 - log_analysis.analyze: {{"log": "error text"}}
-- database.query: {{"question": "show all workflows"}}
+- database.query: {{"question": "show all workflows"}}  (converts natural language to SQL against AlloyDB — use for any data/metrics/history question)
 - rag.search: {{"query": "divide by zero error"}}  (search past incidents for similar issues)
 - rag.runbooks: {{"query": "build failure"}}  (search runbooks)
+- pipeline.generate: {{"repo": "owner/repo"}}  (analyze repo structure and auto-generate a Jenkinsfile CI/CD pipeline)
+- chaos.inject: {{"repo": "owner/repo", "job_name": "test-pipeline"}}  (inject a random bug for chaos engineering demo, then trigger the pipeline to test self-healing)
 - release_notes.generate: {{"repo": "owner/repo", "version": "v1.2.0"}}  (auto-generate release notes from merged PRs and Jira tickets, publish to Confluence and notify Slack)
 
 Jira JQL examples:
@@ -1216,19 +1218,39 @@ End with a deployment note."""
                             context["runbooks"] = []
                             result = {"runbooks": []}
 
-                    # ---------- DATABASE ----------
+                    # ---------- DATABASE (Explainable Text-to-SQL) ----------
                     elif tool == "database" and action == "query":
-                        sql_prompt = f"""Write a PostgreSQL query for AlloyDB given this schema:
+                        sql_prompt = f"""You are an expert PostgreSQL developer. Write a SQL query for AlloyDB given this schema:
+
+-- Core DevOps Tables
 incidents (id TEXT, job_name TEXT, build_number TEXT, detected_at TIMESTAMP, fixed_at TIMESTAMP, mttr_seconds FLOAT, status TEXT, confidence_score INTEGER, severity TEXT, detected_repo TEXT, fix_id TEXT)
 pending_fixes (id TEXT, fix_text TEXT, job_name TEXT, build_number TEXT, detected_repo TEXT, detected_file_path TEXT, created_at TIMESTAMP)
 runbooks (id TEXT, incident_id TEXT, jira_key TEXT, title TEXT, content TEXT, created_at TIMESTAMP)
 pipeline_runs (id TEXT, job_name TEXT, build_number TEXT, status TEXT, duration FLOAT, created_at TIMESTAMP)
 
+-- System Tables
+workflows (id TEXT, user_id TEXT, request TEXT, status TEXT, plan TEXT, created_at TIMESTAMP)
+chat_messages (id SERIAL, user_id TEXT, role TEXT, content TEXT, created_at TIMESTAMP)
+tool_calls (id TEXT, workflow_id TEXT, agent_name TEXT, tool_name TEXT, params TEXT, result TEXT, status TEXT, started_at TIMESTAMP, finished_at TIMESTAMP)
+
+-- Status values: incidents.status IN ('detected', 'fixed'); pipeline_runs.status IN ('SUCCESS', 'FAILURE', 'FAILED'); workflows.status IN ('running', 'completed', 'failed')
+-- MTTR = Mean Time To Repair (in seconds). To get minutes: mttr_seconds / 60.0
+
+Example queries:
+- "How many incidents were auto-fixed?" → SELECT count(*) FROM incidents WHERE status = 'fixed'
+- "Average MTTR in minutes" → SELECT ROUND(AVG(mttr_seconds) / 60.0, 2) as avg_mttr_minutes FROM incidents WHERE mttr_seconds IS NOT NULL
+- "Build success rate" → SELECT ROUND(COUNT(*) FILTER (WHERE status = 'SUCCESS') * 100.0 / NULLIF(COUNT(*), 0), 1) as success_rate_pct FROM pipeline_runs
+- "Show completed workflows" → SELECT id, request, status, created_at FROM workflows WHERE status = 'completed' ORDER BY created_at DESC LIMIT 20
+- "What tools were used today?" → SELECT tool_name, COUNT(*) as uses FROM tool_calls WHERE started_at >= CURRENT_DATE GROUP BY tool_name ORDER BY uses DESC
+
 User request: {params['question']}
 
-Return ONLY the raw SQL query string. No Markdown formatting, no code blocks (e.g. no ```sql), and no comments."""
+Return ONLY the raw SQL query string. No Markdown formatting, no code blocks (e.g. no ```sql), and no comments. Use LIMIT 25 if no limit is specified."""
                         sql_resp = await asyncio.to_thread(gemini_model.generate_content, sql_prompt)
                         raw_sql = sql_resp.text.strip().replace("```sql", "").replace("```", "").strip()
+                        # Remove any remaining markdown artifacts
+                        if raw_sql.startswith("`"):
+                            raw_sql = raw_sql.strip("`")
                         
                         try:
                             async with AsyncSessionLocal() as db_session:
@@ -1239,13 +1261,180 @@ Return ONLY the raw SQL query string. No Markdown formatting, no code blocks (e.
                                     md = "| " + " | ".join(headers) + " |\n| " + " | ".join(["---"]*len(headers)) + " |\n"
                                     for row in data_rows:
                                         md += "| " + " | ".join(row) + " |\n"
-                                    context["db_result"] = f"**SQL:** `{raw_sql}`\n\n{md}"
+                                    context["db_result"] = f"### 🔍 Explainable AI — Query Transparency\n**Question:** {params['question']}\n**SQL Generated:**\n```sql\n{raw_sql}\n```\n**Results ({len(data_rows)} rows):**\n\n{md}"
                                 else:
-                                    context["db_result"] = f"**SQL:** `{raw_sql}`\nNo results."
-                                result = {"sql": raw_sql, "status": "success"}
+                                    context["db_result"] = f"### 🔍 Explainable AI — Query Transparency\n**Question:** {params['question']}\n**SQL Generated:**\n```sql\n{raw_sql}\n```\n**Results:** No matching records found."
+                                result = {"sql": raw_sql, "rows": len(data_rows), "status": "success"}
                         except Exception as sql_err:
-                            context["db_result"] = f"**SQL:** `{raw_sql}`\nError: {sql_err}"
+                            context["db_result"] = f"### 🔍 Query Transparency\n**SQL Generated:**\n```sql\n{raw_sql}\n```\n**Error:** {sql_err}"
                             result = {"sql": raw_sql, "error": str(sql_err)}
+
+                    # ---------- PIPELINE GENERATOR ----------
+                    elif tool == "pipeline" and action == "generate":
+                        pg_repo = params.get("repo", "dheerajyadav1714/ci_cd")
+                        logger.info(f"Generating pipeline for repo: {pg_repo}")
+
+                        # Step 1: Read the repo's file structure to detect the tech stack
+                        repo_files = []
+                        try:
+                            rf_resp = requests.get(f"{MCP_SERVERS['github']}/contents", params={"repo": pg_repo, "path": "", "branch": "main"}, timeout=15)
+                            if rf_resp.status_code == 200:
+                                repo_files = rf_resp.json() if isinstance(rf_resp.json(), list) else rf_resp.json().get("contents", [])
+                        except Exception as rf_err:
+                            logger.warning(f"Pipeline gen - repo read failed: {rf_err}")
+
+                        file_names = [f.get("name", "") if isinstance(f, dict) else str(f) for f in repo_files]
+                        file_list_str = ", ".join(file_names[:50]) or "Could not read repo files"
+
+                        # Step 2: Use Gemini to detect tech stack and generate Jenkinsfile
+                        pipeline_prompt = f"""You are a Senior DevOps Engineer. Analyze this repository's file structure and generate a production-ready Jenkinsfile.
+
+Repository: {pg_repo}
+Files found in root: {file_list_str}
+
+Detection rules:
+- If package.json exists → Node.js project (use npm ci, npm test, npm run build)
+- If requirements.txt or setup.py exists → Python project (use pip install, pytest, flake8)
+- If pom.xml exists → Java/Maven project (use mvn clean install)
+- If go.mod exists → Go project (use go build, go test)
+- If Dockerfile exists → Add Docker build and push stages
+- If Jenkinsfile already exists → Improve it with security scanning stages
+
+Generate a complete, production-ready Jenkinsfile with these stages:
+1. Checkout
+2. Install Dependencies
+3. Linting / Static Analysis 
+4. Unit Tests
+5. Security Scan (use Trivy for containers or Bandit for Python)
+6. Build (Docker build if Dockerfile exists)
+7. Deploy (placeholder stage with echo commands)
+
+Add proper error handling, post-build notifications, and comments explaining each stage.
+Output ONLY the raw Jenkinsfile content. No markdown code fences."""
+
+                        pg_resp = await asyncio.to_thread(gemini_model.generate_content, pipeline_prompt)
+                        jenkinsfile_content = pg_resp.text.strip()
+                        # Clean any accidental markdown
+                        if jenkinsfile_content.startswith("```"):
+                            jenkinsfile_content = re.sub(r'^```\w*\n?', '', jenkinsfile_content)
+                            jenkinsfile_content = re.sub(r'\n?```$', '', jenkinsfile_content)
+
+                        context["pipeline_generated"] = jenkinsfile_content
+                        context["pipeline_repo"] = pg_repo
+                        context["pipeline_tech_stack"] = file_list_str
+
+                        # Step 3: Commit the Jenkinsfile to the repo
+                        committed = False
+                        try:
+                            branch_name = "feature/auto-pipeline"
+                            # Create branch
+                            requests.post(f"{MCP_SERVERS['github']}/branches", json={"repo": pg_repo, "branch": branch_name, "base": "main"}, timeout=15)
+                            # Commit Jenkinsfile
+                            commit_resp = requests.post(f"{MCP_SERVERS['github']}/commit", json={
+                                "repo": pg_repo, "branch": branch_name, "path": "Jenkinsfile",
+                                "content": jenkinsfile_content,
+                                "message": "feat: Auto-generated CI/CD pipeline by AI DevOps Orchestrator"
+                            }, timeout=15)
+                            if commit_resp.status_code == 200:
+                                committed = True
+                                # Create PR
+                                pr_resp = requests.post(f"{MCP_SERVERS['github']}/pr", json={
+                                    "repo": pg_repo, "title": "🤖 Auto-Generated CI/CD Pipeline",
+                                    "body": f"## AI-Generated Pipeline\n\nThis Jenkinsfile was automatically generated by the DevOps Orchestrator after analyzing the repository structure.\n\n**Detected files:** {file_list_str}\n\n### Stages included:\n1. Checkout\n2. Install Dependencies\n3. Linting / Static Analysis\n4. Unit Tests\n5. Security Scan\n6. Build\n7. Deploy\n\n> Generated by GenAI DevOps Orchestrator",
+                                    "head": branch_name, "base": "main"
+                                }, timeout=15)
+                                if pr_resp.status_code == 200:
+                                    context["pipeline_pr"] = pr_resp.json()
+                        except Exception as pg_commit_err:
+                            logger.warning(f"Pipeline commit failed: {pg_commit_err}")
+
+                        # Step 4: Notify Slack
+                        try:
+                            requests.post(f"{MCP_SERVERS['slack']}/send", json={
+                                "text": f"⚙️ *Pipeline Auto-Generated for `{pg_repo}`*\n• Branch: `feature/auto-pipeline`\n• Committed: {'✅' if committed else '⚠️ Manual review needed'}\n• Stages: Checkout → Dependencies → Lint → Test → Security → Build → Deploy"
+                            }, timeout=15)
+                        except Exception:
+                            pass
+
+                        result = {"status": "generated", "repo": pg_repo, "committed": committed, "stages": 7}
+
+                    # ---------- CHAOS ENGINEERING ----------
+                    elif tool == "chaos" and action == "inject":
+                        chaos_repo = params.get("repo", "dheerajyadav1714/ci_cd")
+                        chaos_job = params.get("job_name", "test-pipeline")
+                        logger.info(f"🌪️ CHAOS MODE: Injecting bug into {chaos_repo}")
+
+                        # Step 1: Read the target file
+                        target_file = "src/bug.py"
+                        original_content = ""
+                        try:
+                            read_resp = requests.get(f"{MCP_SERVERS['github']}/file", params={"repo": chaos_repo, "path": target_file, "branch": "main"}, timeout=15)
+                            if read_resp.status_code == 200:
+                                original_content = read_resp.json().get("content", "")
+                        except Exception as cr_err:
+                            logger.warning(f"Chaos read failed: {cr_err}")
+
+                        # Step 2: Generate a chaotic bug using Gemini
+                        chaos_prompt = f"""You are a chaos engineer. Inject a SUBTLE but DETECTABLE bug into this Python code.
+
+The bug must:
+1. Cause a test failure or runtime error (e.g., ZeroDivisionError, TypeError, wrong return value)
+2. Be realistic (looks like a real developer mistake)
+3. NOT destroy the entire file (change only 1-3 lines)
+
+Original code:
+```python
+{original_content}
+```
+
+Return ONLY the full modified Python file content with the bug injected. Add a comment '# CHAOS_INJECTED' on the line you changed so we can track it. No markdown fences."""
+
+                        chaos_resp = await asyncio.to_thread(gemini_model.generate_content, chaos_prompt)
+                        bugged_code = chaos_resp.text.strip()
+                        if bugged_code.startswith("```"):
+                            bugged_code = re.sub(r'^```\w*\n?', '', bugged_code)
+                            bugged_code = re.sub(r'\n?```$', '', bugged_code)
+
+                        context["chaos_original"] = original_content[:500]
+                        context["chaos_injected"] = bugged_code[:500]
+
+                        # Step 3: Commit the bugged code directly to main
+                        chaos_committed = False
+                        try:
+                            commit_resp = requests.post(f"{MCP_SERVERS['github']}/commit", json={
+                                "repo": chaos_repo, "branch": "main", "path": target_file,
+                                "content": bugged_code,
+                                "message": "🌪️ CHAOS: Injected deliberate bug for self-healing demo"
+                            }, timeout=15)
+                            if commit_resp.status_code == 200:
+                                chaos_committed = True
+                        except Exception as cc_err:
+                            logger.warning(f"Chaos commit failed: {cc_err}")
+
+                        # Step 4: Notify Slack that chaos has begun
+                        try:
+                            requests.post(f"{MCP_SERVERS['slack']}/send", json={
+                                "text": f"🌪️ *CHAOS MODE ACTIVATED!*\n• Repository: `{chaos_repo}`\n• File: `{target_file}`\n• Bug injected: ✅\n• Pipeline trigger: Starting...\n\n⏱️ *The clock is ticking!* Let's see if the AI can detect, diagnose, and fix this autonomously.",
+                                "blocks": [
+                                    {"type": "header", "text": {"type": "plain_text", "text": "🌪️ CHAOS MODE ACTIVATED!"}},
+                                    {"type": "section", "text": {"type": "mrkdwn", "text": f"*Repository:* `{chaos_repo}`\n*File:* `{target_file}`\n*Bug Injected:* ✅\n\n⏱️ The AI self-healing loop has been triggered. Watch the magic happen..."}}
+                                ]
+                            }, timeout=15)
+                        except Exception:
+                            pass
+
+                        # Step 5: Trigger the Jenkins pipeline to start the self-healing race
+                        if chaos_committed:
+                            try:
+                                trigger_resp = requests.post(f"{MCP_SERVERS['jenkins']}/trigger", json={
+                                    "job_name": chaos_job,
+                                    "parameters": {"FAIL": "true"}
+                                }, timeout=120)
+                                context["chaos_trigger"] = trigger_resp.json()
+                            except Exception as ct_err:
+                                logger.warning(f"Chaos Jenkins trigger failed: {ct_err}")
+
+                        result = {"status": "chaos_injected", "repo": chaos_repo, "file": target_file, "committed": chaos_committed}
 
                 except Exception as e:
                     logger.error(f"Step {tool}.{action} failed: {e}")
