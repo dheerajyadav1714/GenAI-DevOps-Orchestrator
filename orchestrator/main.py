@@ -455,6 +455,7 @@ Available tools:
 - pipeline.generate: {{"repo": "owner/repo"}}  (analyze repo structure and auto-generate a Jenkinsfile CI/CD pipeline)
 - chaos.inject: {{"repo": "owner/repo", "job_name": "test-pipeline"}}  (inject a random bug for chaos engineering demo, then trigger the pipeline to test self-healing)
 - release_notes.generate: {{"repo": "owner/repo", "version": "v1.2.0"}}  (auto-generate release notes from merged PRs and Jira tickets, publish to Confluence and notify Slack)
+- terraform.provision: {{"project_name": "my-app", "repo": "owner/repo"}}  (zero-touch provisioning: generates Terraform IAC files for a given stack, pushes to a new branch, and creates a PR)
 
 Jira JQL examples:
 - All tickets: "project = SCRUM ORDER BY created DESC"
@@ -844,6 +845,28 @@ Include SECURITY_SCORE: PASS/FAIL based on findings.
 
                     # ---------- JENKINS ----------
                     elif tool == "jenkins" and action == "trigger":
+                        jn = params.get("job_name", "test-pipeline")
+                        
+                        # 🔮 PREDICTIVE DEPLOYMENT WARNINGS
+                        historical_failure = False
+                        try:
+                            q = "SELECT status, COUNT(*) FROM pipeline_runs WHERE job_name = :jn GROUP BY status"
+                            r = await session.execute(sql_text(q), {"jn": jn})
+                            counts = {row[0]: row[1] for row in r}
+                            total = sum(counts.values())
+                            failures = counts.get("FAILURE", 0)
+                            if total >= 2 and (failures / total) >= 0.5:
+                                historical_failure = True
+                                rate = int((failures / total) * 100)
+                                warning_msg = f"⚠️ *Predictive Deployment Warning:*\nHistorically, `{jn}` has a **{rate}% failure rate** ({failures}/{total} recent runs). Proceeding with trigger, but monitoring closely for incident self-healing."
+                                context["predictive_warning"] = warning_msg
+                                try:
+                                    requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": warning_msg}, timeout=15)
+                                except Exception:
+                                    pass
+                        except Exception as p_err:
+                            logger.warning(f"Predictive check failed: {p_err}")
+
                         # Use 120s timeout because Jenkins MCP polls for the actual build number
                         resp = requests.post(f"{MCP_SERVERS['jenkins']}/trigger", json=params, timeout=120)
                         result = resp.json()
@@ -1357,6 +1380,80 @@ Output ONLY the raw Jenkinsfile content. No markdown code fences."""
                             pass
 
                         result = {"status": "generated", "repo": pg_repo, "committed": committed, "stages": 7}
+
+                    # ---------- ZERO-TOUCH PROVISIONING (TERRAFORM) ----------
+                    elif tool == "terraform" and action == "provision":
+                        tf_proj = params.get("project_name", "demo-service")
+                        tf_repo = params.get("repo", "dheerajyadav1714/ci_cd")  # We'll use the main repo to store infra for the hackathon
+                        logger.info(f"🏛️ Zero-Touch Provisioning for {tf_proj} in {tf_repo}")
+
+                        # Step 1: AI Generates Terraform code
+                        tf_prompt = f"""You are a Senior Cloud Architect. We need to provision infrastructure for a project named '{tf_proj}'.
+Generate a full 'main.tf' using the Google Cloud provider.
+
+Requirements:
+- A Google Cloud Run service named '{tf_proj}'
+- A Cloud SQL (PostgreSQL) instance for the database
+- Necessary IAM bindings
+- Output only the raw Terraform code (main.tf content). Do not include markdown formatting or explanations. Make sure it is valid HCL."""
+                        
+                        tf_resp = await asyncio.to_thread(gemini_model.generate_content, tf_prompt)
+                        tf_code = tf_resp.text.strip()
+                        if tf_code.startswith("```"):
+                            tf_code = re.sub(r'^```\w*\n?', '', tf_code)
+                            tf_code = re.sub(r'\n?```$', '', tf_code)
+                            
+                        # Step 2: Create a new branch for the infra
+                        tf_branch = f"infra/{tf_proj}-provisioning"
+                        try:
+                            requests.post(f"{MCP_SERVERS['github']}/branch", json={"repo": tf_repo, "branch": tf_branch, "base": "main"}, timeout=15)
+                        except Exception as br_err:
+                            logger.warning(f"Terraform branch creation failed: {br_err}")
+                            
+                        # Step 3: Commit Terraform code
+                        tf_committed = False
+                        try:
+                            commit_resp = requests.post(f"{MCP_SERVERS['github']}/commit", json={
+                                "repo": tf_repo,
+                                "branch": tf_branch,
+                                "path": "infra/main.tf",
+                                "content": tf_code,
+                                "message": f"build(infra): Zero-touch Terraform provisioning for {tf_proj}"
+                            }, timeout=15)
+                            if commit_resp.status_code == 200:
+                                tf_committed = True
+                        except Exception as cc_err:
+                            logger.warning(f"Terraform commit failed: {cc_err}")
+                            
+                        # Step 4: Open PR
+                        tf_pr_url = None
+                        if tf_committed:
+                            try:
+                                pr_body = "## 🏛️ Autonomous Infrastructure Provisioning\n\nThis PR contains the Terraform configuration to provision the required cloud resources.\n\n- **Cloud Run Service**\n- **Cloud SQL PostgreSQL**\n- **IAM Bindings**\n\n> Auto-generated by GenAI DevOps Orchestrator."
+                                pr_resp = requests.post(f"{MCP_SERVERS['github']}/pr", json={
+                                    "repo": tf_repo,
+                                    "title": f"Infra: Provision {tf_proj} Environment (Terraform)",
+                                    "head": tf_branch,
+                                    "base": "main",
+                                    "body": pr_body
+                                }, timeout=15)
+                                if pr_resp.status_code in [200, 201]:
+                                    tf_pr_url = pr_resp.json().get("html_url")
+                            except Exception as pr_err:
+                                logger.warning(f"Terraform PR creation failed: {pr_err}")
+
+                        # Step 5: Notify Slack
+                        slack_msg = f"🏛️ *Zero-Touch Provisioning Completed*\nI have generated the Terraform configuration for `{tf_proj}`."
+                        if tf_pr_url:
+                            slack_msg += f"\n👉 *Please review the Infrastructure PR before applying:* {tf_pr_url}"
+                            
+                        try:
+                            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": slack_msg}, timeout=15)
+                        except Exception:
+                            pass
+                            
+                        context["terraform_code"] = tf_code[:1000]
+                        result = {"status": "provisioned", "repo": tf_repo, "branch": tf_branch, "pr_url": tf_pr_url}
 
                     # ---------- CHAOS ENGINEERING ----------
                     elif tool == "chaos" and action == "inject":

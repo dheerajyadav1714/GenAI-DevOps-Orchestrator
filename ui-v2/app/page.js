@@ -93,7 +93,7 @@ export default function Home() {
     { icon: "🔍", label: "Show Incidents", desc: "View all incidents & MTTR", prompt: "Show all incidents and their MTTR" },
     { icon: "⚙️", label: "Generate Pipeline", desc: "Auto-create a Jenkinsfile", prompt: "Generate a CI/CD pipeline for dheerajyadav1714/ci_cd" },
     { icon: "🌪️", label: "Chaos Mode", desc: "Inject bug & self-heal", prompt: "Inject chaos into dheerajyadav1714/ci_cd and trigger self-healing" },
-    { icon: "📝", label: "Release Notes", desc: "Generate from PRs & Jira", prompt: "Generate release notes for v2.0.0" },
+    { icon: "🏛️", label: "Provision Infra", desc: "Zero-touch Terraform", prompt: "Provision infrastructure for my-auth-service" },
     { icon: "📊", label: "Build Stats", desc: "Pipeline success rates", prompt: "Show build success rate for the last 7 days" },
     { icon: "🔧", label: "Trigger Pipeline", desc: "Run Jenkins job now", prompt: "Trigger test-pipeline" },
   ];
