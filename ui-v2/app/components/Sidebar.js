@@ -13,17 +13,15 @@ const integrations = [
 export default function Sidebar({ metrics }) {
   return (
     <aside
-      className="w-56 flex flex-col h-full shrink-0 relative z-10"
-      style={{ background: "var(--bg-secondary)", borderRight: "1px solid var(--border)" }}
+      className="w-64 flex flex-col h-full shrink-0 relative z-10 bg-white"
+      style={{ borderRight: "1px solid var(--border)", boxShadow: "0 0 20px rgba(0,0,0,0.02)" }}
     >
-      {/* Logo */}
-      <div className="px-4 py-4 flex items-center gap-2.5" style={{ borderBottom: "1px solid var(--border)" }}>
-        <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-extrabold"
-          style={{ background: "linear-gradient(135deg, #7c3aed, #6d28d9)", color: "white" }}
-        >
-          ⚡
-        </div>
+      <div className="p-4" style={{ paddingBottom: "1rem" }}>
+        <button className="w-full btn-liquid-blue py-2.5 flex items-center justify-center gap-2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New Chat
+        </button>
+      </div>
         <div>
           <div className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>DevOps AI</div>
           <div className="text-xs" style={{ color: "var(--text-muted)", fontSize: "0.6rem" }}>Autonomous Platform</div>
@@ -42,17 +40,14 @@ export default function Sidebar({ metrics }) {
               7/7
             </span>
           </div>
-          <div className="space-y-0.5">
+          <div className="space-y-1">
             {integrations.map((item) => (
               <div
                 key={item.name}
-                className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg transition-colors"
-                style={{ cursor: "default" }}
-                onMouseEnter={(e) => e.currentTarget.style.background = "var(--bg-hover)"}
-                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                className="flex items-center gap-2.5 px-3 py-2 rounded-lg sidebar-item cursor-pointer"
               >
-                <span className="text-sm" style={{ filter: "grayscale(0.2)" }}>{item.icon}</span>
-                <span className="text-xs flex-1 font-medium" style={{ color: "var(--text-secondary)" }}>
+                <span className="text-sm">{item.icon}</span>
+                <span className="text-sm flex-1 font-medium">
                   {item.name}
                 </span>
                 <span
@@ -87,12 +82,20 @@ export default function Sidebar({ metrics }) {
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border)" }}>
-        <div className="flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--success)" }} />
-          <span className="text-xs" style={{ color: "var(--text-muted)", fontSize: "0.65rem" }}>
-            Gemini 2.5 Flash • GCP
-          </span>
+      <div className="px-5 py-4 mt-auto" style={{ borderTop: "1px solid var(--border)" }}>
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-gray-200 overflow-hidden">
+            <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix" alt="User" className="w-full h-full object-cover" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>DevOps AI</span>
+            <div className="flex items-center gap-1.5">
+              <div className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--success)" }} />
+              <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>
+                Gemini 2.5 Flash
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </aside>
@@ -101,15 +104,10 @@ export default function Sidebar({ metrics }) {
 
 function SidebarStat({ label, value, icon, trend }) {
   return (
-    <div
-      className="flex items-center gap-2 px-2 py-1.5 rounded-lg"
-      style={{ cursor: "default" }}
-      onMouseEnter={(e) => e.currentTarget.style.background = "var(--bg-hover)"}
-      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-    >
-      <span className="text-xs">{icon}</span>
-      <span className="text-xs flex-1" style={{ color: "var(--text-muted)" }}>{label}</span>
-      <span className="text-xs font-bold font-mono" style={{ color: "var(--text-primary)" }}>
+    <div className="flex items-center gap-3 px-3 py-2 rounded-lg sidebar-item cursor-pointer">
+      <span className="text-sm">{icon}</span>
+      <span className="text-sm flex-1 font-medium">{label}</span>
+      <span className="text-sm font-bold font-mono" style={{ color: "var(--text-primary)" }}>
         {value}
       </span>
     </div>

@@ -97,15 +97,11 @@ export default function Home() {
     { icon: "📊", label: "Build Stats", desc: "Pipeline success rates", prompt: "Show build success rate for the last 7 days" },
     { icon: "🔧", label: "Trigger Pipeline", desc: "Run Jenkins job now", prompt: "Trigger test-pipeline" },
   ];
-
   return (
-    <div className="flex h-screen overflow-hidden relative">
-      <div className="bg-mesh" />
-      <div className="dot-grid" />
-
+    <div className="flex h-screen overflow-hidden bg-white">
       <Sidebar metrics={metrics} />
 
-      <main className="flex-1 flex flex-col relative z-10">
+      <main className="flex-1 flex flex-col relative z-10 bg-[#f8fafc] m-2 rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         {/* Header */}
         <header
           className="flex items-center justify-between px-6 h-14 shrink-0"
@@ -143,32 +139,28 @@ export default function Home() {
               {messages.length === 0 && !isLoading ? (
                 <div className="flex flex-col items-center justify-center h-full animate-slide-up">
                   {/* Hero */}
-                  <div className="mb-8 text-center">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full mb-5" style={{ background: "var(--accent-dim)", border: "1px solid var(--border-accent)" }}>
-                      <div className="w-1.5 h-1.5 rounded-full status-live" style={{ background: "var(--success)" }} />
-                      <span className="text-xs font-medium" style={{ color: "var(--accent-light)" }}>All systems operational</span>
-                    </div>
-                    <h2 className="text-3xl font-bold tracking-tight mb-2">
-                      <span className="gradient-text">DevOps Orchestrator</span>
+                  <div className="mb-10 text-center">
+                    <h2 className="text-4xl font-semibold tracking-tight mb-3 text-slate-800">
+                      What would you like to build?
                     </h2>
-                    <p className="text-sm max-w-md" style={{ color: "var(--text-muted)", lineHeight: "1.6" }}>
-                      Autonomous CI/CD management powered by Gemini. Fix bugs, generate pipelines, analyze logs, or run chaos experiments.
+                    <p className="text-base max-w-md text-slate-500 mx-auto">
+                      Use DevOps AI to orchestrate pipelines, query metrics, or provision infrastructure.
                     </p>
                   </div>
 
                   {/* Quick Actions Grid */}
-                  <div className="grid grid-cols-3 gap-2.5 max-w-xl w-full">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-w-2xl w-full">
                     {quickActions.map((action, i) => (
                       <button
                         key={i}
                         onClick={() => setInput(action.prompt)}
-                        className="surface-glow rounded-xl p-3.5 text-left cursor-pointer group"
+                        className="action-card"
                       >
-                        <div className="text-lg mb-1.5">{action.icon}</div>
-                        <div className="text-xs font-semibold mb-0.5" style={{ color: "var(--text-primary)" }}>
+                        <div className="text-xl mb-2">{action.icon}</div>
+                        <div className="text-[13px] font-semibold text-slate-800 mb-0.5">
                           {action.label}
                         </div>
-                        <div className="text-xs" style={{ color: "var(--text-muted)", lineHeight: "1.4" }}>
+                        <div className="text-[11px] text-slate-500 leading-tight">
                           {action.desc}
                         </div>
                       </button>
@@ -182,18 +174,15 @@ export default function Home() {
                   ))}
 
                   {isLoading && (
-                    <div className="flex items-start gap-3 animate-slide-up">
-                      <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0" style={{ background: "var(--accent-dim)", color: "var(--accent-light)" }}>
-                        AI
+                    <div className="flex items-start gap-4 animate-slide-up max-w-4xl mx-auto w-full">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 avatar-ai">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
                       </div>
-                      <div className="surface rounded-xl rounded-tl-sm px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <div className="flex gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full think-dot" style={{ background: "var(--accent-light)" }} />
-                            <span className="w-1.5 h-1.5 rounded-full think-dot" style={{ background: "var(--accent-light)" }} />
-                            <span className="w-1.5 h-1.5 rounded-full think-dot" style={{ background: "var(--accent-light)" }} />
-                          </div>
-                          <span className="text-xs" style={{ color: "var(--text-muted)" }}>Orchestrating workflow...</span>
+                      <div className="flex-1 mt-1">
+                        <div className="flex flex-col gap-3 max-w-md">
+                           <div className="h-3 w-full rounded-full shimmer" />
+                           <div className="h-3 w-4/5 rounded-full shimmer" />
+                           <div className="h-3 w-2/3 rounded-full shimmer" />
                         </div>
                       </div>
                     </div>
@@ -204,27 +193,28 @@ export default function Home() {
             </div>
 
             {/* Input */}
-            <div className="px-6 py-3 shrink-0" style={{ borderTop: "1px solid var(--border)", background: "rgba(9,9,11,0.6)", backdropFilter: "blur(8px)" }}>
+            {/* Floating Input Pill Box */}
+            <div className="px-6 pb-6 pt-4 shrink-0 mt-auto bg-gradient-to-t from-[var(--bg-app)] via-[var(--bg-app)] to-transparent">
               <form onSubmit={sendMessage} className="max-w-3xl mx-auto">
-                <div className="flex gap-2 items-center">
+                <div className="chat-input-container flex items-center">
                   <input
                     type="text"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    placeholder="Message DevOps Orchestrator..."
+                    placeholder="Describe the objective you want to achieve..."
                     disabled={isLoading}
-                    className="flex-1 px-4 py-2.5 rounded-xl chat-input"
+                    className="flex-1 chat-input py-3"
                   />
                   <button
                     type="submit"
                     disabled={isLoading || !input.trim()}
-                    className="btn-primary px-5 py-2.5 rounded-xl text-sm"
+                    className="btn-liquid-blue w-10 h-10 rounded-full flex items-center justify-center shrink-0 ml-2"
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    {isLoading ? <span className="text-xs text-white">...</span> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>}
                   </button>
                 </div>
-                <p className="text-center mt-1.5 text-xs" style={{ color: "var(--text-muted)" }}>
-                  Powered by <span style={{ color: "var(--accent-light)" }}>Gemini 2.5 Flash</span> &middot; 6 MCP Agents &middot; AlloyDB RAG
+                <p className="text-center mt-3 text-xs text-slate-400">
+                  DevOps AI can make mistakes. Consider verifying critical actions.
                 </p>
               </form>
             </div>
