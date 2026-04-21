@@ -49,3 +49,10 @@ ADVANCED_SCENARIOS.md
 UPDATED_ARCHITECTURE_DIAGRAMS.md
 TOP_100_REFINEMENT_IDEAS.md
 BUSINESS_STRATEGY.md
+FUTURE_ENTERPRISE_ENHANCEMENTS.md
+
+# Local & Scratch
+orchestrator/logs.txt
+orchestrator/orchestrator.db
+orchestrator/test_regex.py
+scratch/
