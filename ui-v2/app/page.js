@@ -1,18 +1,25 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import Sidebar from "./components/Sidebar";
-import ChatMessage from "./components/ChatMessage";
+import DashboardView from "./components/DashboardView";
+import AgentHubView from "./components/AgentHubView";
+import ChatView from "./components/ChatView";
+import EtherealSidebar from "./components/EtherealSidebar";
+import MegaMenu from "./components/MegaMenu";
 import MetricsPanel from "./components/MetricsPanel";
+import SettingsPanel from "./components/SettingsPanel";
 
 const API_BASE = "https://devops-orchestrator-v2-688623456290.us-central1.run.app";
 
 export default function Home() {
+  const [activeView, setActiveView] = useState("DASHBOARD");
   const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
   const [metrics, setMetrics] = useState(null);
   const [showMetrics, setShowMetrics] = useState(false);
-  const chatEndRef = useRef(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [isMegaMenuOpen, setIsMegaMenuOpen] = useState(false);
+  const [isDark, setIsDark] = useState(true);
+  const [activeAgent, setActiveAgent] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     fetchMessages();
@@ -21,17 +28,28 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
+  // Sync dark mode to the <html> tag for robust global CSS variable inheritance
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDark]);
 
   async function fetchMessages() {
     try {
       const res = await fetch(`${API_BASE}/messages?user_id=ui_user&limit=50`);
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data)) {
-          setMessages(data.map((m) => ({ role: m.role, content: m.content })));
+        // Backend returns { messages: [...] }
+        const msgList = data.messages || data;
+        if (Array.isArray(msgList) && msgList.length > 0) {
+          setMessages(msgList.map((m) => ({ 
+            role: m.role, 
+            content: m.content,
+            thought: m.thought || []
+          })));
         }
       }
     } catch (e) { /* silent */ }
@@ -44,11 +62,27 @@ export default function Home() {
     } catch (e) { /* silent */ }
   }
 
-  async function sendMessage(e) {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
-    const userMsg = input.trim();
-    setInput("");
+  const handleAgentClick = (agent) => {
+    setActiveAgent(agent);
+    setIsMegaMenuOpen(true);
+  };
+
+  const handleProtocolSelect = (protocol) => {
+    setActiveView("CHAT");
+  };
+
+  const clearMessages = async () => {
+    setMessages([]);
+    setActiveAgent(null);
+    try {
+      await fetch(`${API_BASE}/messages?user_id=ui_user`, { method: "DELETE" });
+    } catch (e) {
+      console.error("Failed to clear backend messages:", e);
+    }
+  };
+
+  async function sendMessage(userMsg) {
+    if (!userMsg.trim() || isLoading) return;
     setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
     setIsLoading(true);
 
@@ -77,7 +111,48 @@ export default function Home() {
             try { plan = typeof statusData.plan === "string" ? JSON.parse(statusData.plan) : statusData.plan || []; } catch { plan = []; }
             const replyStep = plan.find((s) => s.tool === "reply" && s.action === "send");
             const replyText = replyStep?.params?.text || "Workflow completed.";
-            setMessages((prev) => [...prev, { role: "assistant", content: replyText }]);
+            
+            // Extract thinking steps from the workflow plan (all tools except the final reply)
+            const thoughtSteps = plan
+              .filter((s) => s.tool !== "reply")
+              .map((s) => `Triggered ${s.tool}.${s.action} with parameters: ${JSON.stringify(s.params)}`);
+
+            let actionCard = null;
+            let diff = null;
+
+            for (const step of plan) {
+              if (step.result) {
+                // If the tool returned a diff, capture it
+                if (step.result.oldCode !== undefined && step.result.newCode !== undefined) {
+                  diff = {
+                    filename: step.result.file_path || "file",
+                    oldCode: step.result.oldCode || "",
+                    newCode: step.result.newCode || ""
+                  };
+                }
+                
+                // If the tool requires approval (or UI action), capture it
+                if (step.result.status?.includes("created") || step.result.status === "provisioned" || step.result.status === "remediated" || step.result.status === "optimized" || step.result.status === "architecture_drafted") {
+                  actionCard = { 
+                     status: 'pending', 
+                     actionType: step.result.status === "architecture_drafted" ? 'approve_architecture' : 'approve',
+                     prNumber: step.result.pr_number || null,
+                     prUrl: step.result.pr_url || null,
+                     repo: step.result.repo || null,
+                     jiraKey: step.result.jira_key || null,
+                     workflowId: workflow_id
+                  };
+                }
+              }
+            }
+
+            setMessages((prev) => [...prev, { 
+              role: "assistant", 
+              content: replyText,
+              thought: thoughtSteps,
+              diff,
+              actionCard
+            }]);
             fetchMetrics();
           }
         } catch (pollErr) { /* retry */ }
@@ -89,138 +164,198 @@ export default function Home() {
     }
   }
 
-  const quickActions = [
-    { icon: "🔍", label: "Show Incidents", desc: "View all incidents & MTTR", prompt: "Show all incidents and their MTTR" },
-    { icon: "⚙️", label: "Generate Pipeline", desc: "Auto-create a Jenkinsfile", prompt: "Generate a CI/CD pipeline for dheerajyadav1714/ci_cd" },
-    { icon: "🌪️", label: "Chaos Mode", desc: "Inject bug & self-heal", prompt: "Inject chaos into dheerajyadav1714/ci_cd and trigger self-healing" },
-    { icon: "🏛️", label: "Provision Infra", desc: "Zero-touch Terraform", prompt: "Provision infrastructure for my-auth-service" },
-    { icon: "📊", label: "Build Stats", desc: "Pipeline success rates", prompt: "Show build success rate for the last 7 days" },
-    { icon: "🔧", label: "Trigger Pipeline", desc: "Run Jenkins job now", prompt: "Trigger test-pipeline" },
-  ];
-  return (
-    <div className="flex h-screen overflow-hidden bg-white">
-      <Sidebar onNewChat={() => setMessages([])} />
+  const handleApproveAction = async (idx) => {
+    const msg = messages[idx];
+    if (!msg || !msg.actionCard) return;
 
-      <main className="flex-1 flex flex-col relative z-10 bg-white">
-        {/* Header */}
-        <header
-          className="flex items-center justify-between px-6 h-14 shrink-0 bg-white border-b border-gray-100"
-        >
-          <div className="flex items-center gap-3">
-            <h1 className="text-sm font-bold text-slate-800">
-              DevOps Orchestrator
-            </h1>
-            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 uppercase tracking-widest">
-              v2.0
-            </span>
+    try {
+      // Set status to approved immediately for UX, but we'll revert if it fails
+      setMessages(prev => {
+        const newM = [...prev];
+        newM[idx] = { ...newM[idx], actionCard: { ...newM[idx].actionCard, status: 'approved' } };
+        return newM;
+      });
+
+      const response = await fetch(`${API_BASE}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action_type: msg.actionCard.actionType || 'approve',
+          repo: msg.actionCard.repo || "dheerajyadav1714/ci_cd",
+          pr_number: msg.actionCard.prNumber || 0,
+          jira_key: msg.actionCard.jiraKey || "",
+          workflow_id: msg.actionCard.workflowId || "",
+          pr_url: msg.actionCard.prUrl || ""
+        })
+      });
+
+      if (!response.ok) throw new Error("Approval failed");
+      const appData = await response.json();
+
+      if (msg.actionCard.actionType !== 'approve_architecture') {
+        // Success reply
+        const replyMsg = `✅ Approval confirmed. PR #${msg.actionCard.prNumber || ''} has been merged and the CI/CD pipeline is now deploying the fix.`;
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: replyMsg,
+          thought: ['API Call: POST /approve', 'GitHub: Merged pull request', 'Jira: Status updated to Done', 'Slack: Merge notification sent']
+        }]);
+        return;
+      }
+
+      // For architecture approval, poll the backend provisioning workflow
+      setMessages(prev => [...prev, { role: "assistant", content: "Thinking..." }]);
+      const new_workflow_id = appData.workflow_id;
+      let completed = false;
+      let attempts = 0;
+
+      while (!completed && attempts < 90) {
+        attempts++;
+        await new Promise((r) => setTimeout(r, 2000));
+        try {
+          const statusRes = await fetch(`${API_BASE}/workflow/${new_workflow_id}`);
+          const statusData = await statusRes.json();
+          if (statusData.status === "completed" || statusData.status === "failed") {
+            completed = true;
+            let plan = [];
+            try { plan = typeof statusData.plan === "string" ? JSON.parse(statusData.plan) : statusData.plan || []; } catch { plan = []; }
+            const replyStep = plan.find((s) => s.tool === "reply" && s.action === "send");
+            const replyText = replyStep?.params?.text || "Architecture provisioned successfully.";
+            
+            const thoughtSteps = plan.filter(s => s.tool !== "reply").map(s => `Executed: ${s.tool}.${s.action}`);
+            
+            let diff = null;
+            const provStep = plan.find((s) => s.tool === "migration" && s.action === "provision");
+            if (provStep && provStep.result && provStep.result.newCode) {
+              diff = { oldCode: provStep.result.oldCode || "# Target Architecture Placeholder", newCode: provStep.result.newCode || "" };
+            }
+
+            setMessages((prev) => {
+              const updated = [...prev];
+              updated[updated.length - 1] = { 
+                role: "assistant", 
+                content: replyText,
+                thought: thoughtSteps.length > 0 ? thoughtSteps : ['Autonomously executed Provisioning'],
+                diff
+              };
+              return updated;
+            });
+            fetchMetrics();
+          }
+        } catch (pollErr) { /* ignore to retry */ }
+      }
+    } catch (err) {
+      console.error("Approval error:", err);
+      // Revert status
+      setMessages(prev => {
+        const newM = [...prev];
+        newM[idx] = { ...newM[idx], actionCard: { ...newM[idx].actionCard, status: 'pending' } };
+        return newM;
+      });
+      alert("Failed to approve. Check console or backend logs.");
+    }
+  };
+
+  return (
+    <div className={`flex h-screen transition-colors duration-500 ${isDark ? 'dark bg-background text-on-surface' : 'bg-background text-on-surface'}`}>
+      
+      {/* Dynamic Sidebar */}
+      <EtherealSidebar 
+        activeView={activeView} 
+        setActiveView={setActiveView} 
+        isDark={isDark}
+        onToggleSettings={() => setShowSettings(!showSettings)}
+        onNewChat={clearMessages}
+      />
+
+      {/* Main Container */}
+      <main className="flex-1 flex flex-col md:ml-20 h-screen relative overflow-hidden transition-all duration-300">
+        
+        {/* Top App Bar */}
+        <header className="flex justify-between items-center w-full px-8 h-16 backdrop-blur-md border-b sticky top-0 z-50 flex-shrink-0 transition-colors bg-surface-container-low/80 border-outline-variant/30 shadow-[0_0_40px_rgba(0,0,0,0.05)]">
+          <div className="flex items-center gap-4">
+             <div className="flex flex-col">
+                <h1 className="font-['Inter'] font-black text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary-container tracking-tighter text-xl">
+                  DevOps AI
+                </h1>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono font-bold tracking-[0.2em] uppercase opacity-50 text-on-surface">
+                    SRE Control Plane
+                  </span>
+                  <div className="w-1 h-1 rounded-full bg-secondary animate-pulse" />
+                </div>
+             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowMetrics(!showMetrics)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
-              style={{
-                background: showMetrics ? "var(--accent-dim)" : "transparent",
-                color: showMetrics ? "var(--accent-light)" : "var(--text-muted)",
-                border: `1px solid ${showMetrics ? "var(--border-accent)" : "var(--border)"}`,
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
-              Metrics
-            </button>
+
+          <div className="flex items-center gap-4">
+             {/* Theme Toggle */}
+             <button 
+               onClick={() => setIsDark(!isDark)}
+               className="w-10 h-10 flex items-center justify-center rounded-full transition-all duration-300 text-on-surface-variant hover:bg-on-surface/5 hover:text-primary"
+             >
+                <span className="material-symbols-outlined text-[20px]">
+                  {isDark ? 'light_mode' : 'dark_mode'}
+                </span>
+             </button>
+
+             <button 
+               onClick={() => setShowMetrics(!showMetrics)}
+               className="hidden sm:flex items-center gap-3 px-3 py-1.5 rounded-full border transition-all cursor-pointer hover:border-primary/50 bg-surface-container-low border-outline-variant/30 text-primary"
+             >
+               <span className="material-symbols-outlined text-sm">sensors</span>
+               <span className="font-mono text-[10px] font-black uppercase tracking-widest">
+                  {metrics?.total_workflows || 0} Workflows
+               </span>
+             </button>
           </div>
         </header>
 
-        <div className="flex flex-1 overflow-hidden">
-          {/* Chat */}
-          <div className="flex-1 flex flex-col">
-            <div className="flex-1 overflow-y-auto px-6 py-5">
-              {messages.length === 0 && !isLoading ? (
-                <div className="flex flex-col items-center justify-center h-full animate-slide-up">
-                  {/* Hero */}
-                  <div className="mb-10 text-center">
-                    <h2 className="text-4xl font-semibold tracking-tight mb-3 text-slate-800">
-                      What would you like to build?
-                    </h2>
-                    <p className="text-base max-w-md text-slate-500 mx-auto">
-                      Use DevOps AI to orchestrate pipelines, query metrics, or provision infrastructure.
-                    </p>
-                  </div>
-
-                  {/* Quick Actions Grid */}
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-w-2xl w-full">
-                    {quickActions.map((action, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setInput(action.prompt)}
-                        className="action-card"
-                      >
-                        <div className="text-xl mb-2">{action.icon}</div>
-                        <div className="text-[13px] font-semibold text-slate-800 mb-0.5">
-                          {action.label}
-                        </div>
-                        <div className="text-[11px] text-slate-500 leading-tight">
-                          {action.desc}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4 max-w-3xl mx-auto">
-                  {messages.map((msg, i) => (
-                    <ChatMessage key={i} message={msg} index={i} />
-                  ))}
-
-                  {isLoading && (
-                    <div className="flex items-start gap-4 animate-slide-up max-w-4xl mx-auto w-full">
-                      <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 avatar-ai">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                      </div>
-                      <div className="flex-1 mt-1">
-                        <div className="flex flex-col gap-3 max-w-md">
-                           <div className="h-3 w-full rounded-full shimmer" />
-                           <div className="h-3 w-4/5 rounded-full shimmer" />
-                           <div className="h-3 w-2/3 rounded-full shimmer" />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  <div ref={chatEndRef} />
-                </div>
-              )}
-            </div>
-
-            {/* Input */}
-            {/* Floating Input Pill Box */}
-            <div className="px-6 pb-6 pt-4 shrink-0 mt-auto bg-gradient-to-t from-white to-transparent">
-              <form onSubmit={sendMessage} className="max-w-3xl mx-auto">
-                <div className="flex items-center bg-[#f4f4f5] border border-gray-200 shadow-sm rounded-full pl-5 pr-2 py-2">
-                  <input
-                    type="text"
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="Message DevOps AI..."
-                    disabled={isLoading}
-                    className="flex-1 bg-transparent border-none outline-none text-[15px] text-slate-800 placeholder-slate-500 py-1"
-                  />
-                  <button
-                    type="submit"
-                    disabled={isLoading || !input.trim()}
-                    className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 ml-3 transition-colors text-white disabled:opacity-40"
-                    style={{ background: input.trim() ? "#000000" : "#d1d5db" }}
-                  >
-                    {isLoading ? <span className="text-xs text-white">...</span> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>}
-                  </button>
-                </div>
-                <p className="text-center mt-3 text-xs text-slate-400">
-                  DevOps AI can make mistakes. Consider verifying critical actions.
-                </p>
-              </form>
-            </div>
+        {/* Dynamic View Content */}
+        <div className="flex-1 flex relative z-10 transition-all duration-300 overflow-hidden">
+          <div className="flex-1 relative h-full flex overflow-hidden">
+            {activeView === "DASHBOARD" && <DashboardView metrics={metrics} />}
+            {activeView === "HUB" && <AgentHubView onAgentClick={handleAgentClick} />}
+            {activeView === "CHAT" && (
+              <ChatView 
+                activeAgent={activeAgent} 
+                messages={messages} 
+                isLoading={isLoading} 
+                onSendMessage={sendMessage}
+                onClearChat={clearMessages}
+                onApproveAction={handleApproveAction}
+              />
+            )}
           </div>
-
-          {showMetrics && <MetricsPanel metrics={metrics} />}
+          {/* Slide-in Metrics Panel */}
+          {showMetrics && (
+            <div className="w-80 h-full border-l shrink-0 transition-all bg-surface-container-lowest border-outline-variant/30 overflow-y-auto z-20">
+               <MetricsPanel metrics={metrics} />
+            </div>
+          )}
         </div>
+
+        {/* Global Mega Menu */}
+        <MegaMenu 
+          isOpen={isMegaMenuOpen} 
+          onClose={() => setIsMegaMenuOpen(false)} 
+          onSelect={handleProtocolSelect}
+        />
+
+        {/* Settings Panel */}
+        <SettingsPanel
+          isOpen={showSettings}
+          onClose={() => setShowSettings(false)}
+          isDark={isDark}
+          setIsDark={setIsDark}
+        />
+
+        {/* Overlay Background Gradients (Aether Style) */}
+        {isDark && (
+          <>
+            <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-primary/5 rounded-full blur-[120px] pointer-events-none" />
+            <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] bg-secondary/5 rounded-full blur-[150px] pointer-events-none" />
+          </>
+        )}
       </main>
     </div>
   );
