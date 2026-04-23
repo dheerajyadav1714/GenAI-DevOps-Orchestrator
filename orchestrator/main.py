@@ -639,6 +639,7 @@ Available tools:
 - agile.sprint_health: {{"project_key": "SCRUM"}}  (generates a Sprint Health Report: velocity score, burndown, blockers, and developer activity gaps by querying Jira and GitHub)
 - docs.generate: {{"repo": "owner/repo", "doc_type": "API"}}  (reads repo source code, generates comprehensive documentation, commits to branch, opens PR, and publishes to Confluence)
 - sre.postmortem: {{"service": "auth service outage", "repo": "owner/repo"}}  (auto-generates a blameless Incident Postmortem following Google SRE template using AlloyDB, Jira, and GitHub data, publishes to Confluence)
+- gcp.explore: {{"query": "list all Cloud Run services"}}  (queries LIVE GCP infrastructure — can list Cloud Run services, GKE clusters, Compute instances, Cloud SQL databases, or any GCP resource. Returns real production data.)
 - migration.design: {{"repo": "owner/repo", "project_name": "migration", "inventory_csv": "[[PREVIOUS_STEP_RESULT.content]]", "preferences": "cost vs HA"}} (Run Architect/SecOps/FinOps multi-agent debate based on user preferences and the inventory CSV. USE exactly '[[PREVIOUS_STEP_RESULT.content]]' for the inventory_csv parameter to chain read files. Outputs the finalized secure robust architecture and a Mermaid map to the user. MUST wait for user approval before provisioning.)
 - migration.provision: {{"repo": "owner/repo", "project_name": "migration", "approved_architecture": "the confirmed design"}} (ONLY run this AFTER user approves the design. Autonomously writes the Terraform to a new Github branch and opens a PR.)
 
@@ -2650,6 +2651,69 @@ Be thorough and professional. Use the actual data provided to construct a realis
 
                         result = {"status": "postmortem_generated", "service": pm_service, "confluence_published": pm_conf}
 
+                    # ---------- GCP RESOURCE EXPLORER ----------
+                    elif tool == "gcp" and action == "explore":
+                        gcp_query = params.get("query", "list Cloud Run services")
+                        logger.info(f"🌐 GCP Resource Explorer: {gcp_query}")
+
+                        # Gather live GCP data from multiple services
+                        gcp_data = {}
+
+                        # 1. Cloud Run services
+                        try:
+                            from google.cloud import run_v2
+                            run_client = run_v2.ServicesClient()
+                            projects = ["gcp-experiments-490315", "genai-hackathon-491712"]
+                            services_list = []
+                            for proj in projects:
+                                try:
+                                    parent = f"projects/{proj}/locations/us-central1"
+                                    for svc in run_client.list_services(parent=parent):
+                                        services_list.append({
+                                            "name": svc.name.split("/")[-1],
+                                            "project": proj,
+                                            "uri": svc.uri,
+                                            "create_time": str(svc.create_time)[:19] if svc.create_time else "N/A",
+                                            "update_time": str(svc.update_time)[:19] if svc.update_time else "N/A",
+                                        })
+                                except Exception as svc_err:
+                                    logger.warning(f"Cloud Run list for {proj} failed: {svc_err}")
+                            gcp_data["cloud_run_services"] = services_list
+                        except Exception as cr_err:
+                            logger.warning(f"Cloud Run client failed: {cr_err}")
+                            gcp_data["cloud_run_services"] = "Client unavailable"
+
+                        # 2. AlloyDB/Database stats
+                        try:
+                            async with async_session() as db_sess:
+                                wf_count = await db_sess.execute(sql_text("SELECT COUNT(*) FROM workflows"))
+                                inc_count = await db_sess.execute(sql_text("SELECT COUNT(*) FROM incidents"))
+                                gcp_data["alloydb"] = {
+                                    "total_workflows": wf_count.scalar() or 0,
+                                    "total_incidents": inc_count.scalar() or 0,
+                                    "status": "connected"
+                                }
+                        except:
+                            gcp_data["alloydb"] = {"status": "unavailable"}
+
+                        # 3. Ask Gemini to format it nicely based on user query
+                        gcp_prompt = f"""You are a Cloud Engineer reporting on GCP infrastructure.
+
+User asked: "{gcp_query}"
+
+Here is the LIVE data from GCP APIs:
+{json.dumps(gcp_data, indent=2, default=str)}
+
+Format a comprehensive, professional report answering the user's question. Use tables where appropriate.
+Include service names, URLs, project IDs, and timestamps.
+If the user asked about something not in the data, mention what data IS available."""
+
+                        gcp_resp = await asyncio.to_thread(gemini_model.generate_content, gcp_prompt)
+                        gcp_report = gcp_resp.text.strip()
+                        context["gcp_report"] = gcp_report
+
+                        result = {"status": "explored", "query": gcp_query, "report": gcp_report, "raw_data": gcp_data}
+
                 except Exception as e:
                     logger.error(f"Step {tool}.{action} failed: {e}")
                     result = {"error": str(e)}
@@ -3090,6 +3154,119 @@ async def get_metrics():
                 metrics["auto_merged"] = 0
 
             return metrics
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/metrics/dora")
+async def get_dora_metrics():
+    """Returns the 4 DORA metrics: Deployment Frequency, Lead Time, MTTR, Change Failure Rate"""
+    try:
+        async with AsyncSessionLocal() as session:
+            dora = {}
+
+            # 1. Deployment Frequency (deploys per day over last 30 days)
+            try:
+                r = await session.execute(sql_text(
+                    "SELECT COUNT(*) FROM workflows WHERE status = 'completed' AND created_at >= NOW() - INTERVAL '30 days'"
+                ))
+                total_deploys = r.scalar() or 0
+                dora["deployment_frequency"] = round(total_deploys / 30, 2)
+                dora["total_deployments_30d"] = total_deploys
+                # Grade: Elite (>1/day), High (1/week-1/day), Medium (1/month-1/week), Low (<1/month)
+                if dora["deployment_frequency"] >= 1:
+                    dora["df_grade"] = "Elite"
+                elif dora["deployment_frequency"] >= 0.14:
+                    dora["df_grade"] = "High"
+                elif dora["deployment_frequency"] >= 0.03:
+                    dora["df_grade"] = "Medium"
+                else:
+                    dora["df_grade"] = "Low"
+            except:
+                dora["deployment_frequency"] = 0
+                dora["df_grade"] = "N/A"
+
+            # 2. Lead Time for Changes (avg time from workflow creation to completion)
+            try:
+                r = await session.execute(sql_text(
+                    "SELECT AVG(EXTRACT(EPOCH FROM (completed_at - created_at))) FROM workflows WHERE status = 'completed' AND completed_at IS NOT NULL AND created_at >= NOW() - INTERVAL '30 days'"
+                ))
+                avg_lead = r.scalar()
+                dora["lead_time_seconds"] = round(float(avg_lead), 1) if avg_lead else None
+                dora["lead_time_display"] = f"{round(float(avg_lead)/60, 1)} min" if avg_lead else "N/A"
+                # Grade: Elite (<1hr), High (<1day), Medium (<1week), Low (>1week)
+                if avg_lead and avg_lead < 3600:
+                    dora["lt_grade"] = "Elite"
+                elif avg_lead and avg_lead < 86400:
+                    dora["lt_grade"] = "High"
+                elif avg_lead and avg_lead < 604800:
+                    dora["lt_grade"] = "Medium"
+                else:
+                    dora["lt_grade"] = "Low"
+            except:
+                dora["lead_time_seconds"] = None
+                dora["lt_grade"] = "N/A"
+
+            # 3. Mean Time to Recovery (from incidents table)
+            try:
+                r = await session.execute(sql_text(
+                    "SELECT AVG(mttr_seconds) FROM incidents WHERE mttr_seconds IS NOT NULL AND detected_at >= NOW() - INTERVAL '30 days'"
+                ))
+                avg_mttr = r.scalar()
+                dora["mttr_seconds"] = round(float(avg_mttr), 1) if avg_mttr else None
+                dora["mttr_display"] = f"{round(float(avg_mttr)/60, 1)} min" if avg_mttr else "N/A"
+                # Grade: Elite (<1hr), High (<1day), Medium (<1week), Low (>1week)
+                if avg_mttr and avg_mttr < 3600:
+                    dora["mttr_grade"] = "Elite"
+                elif avg_mttr and avg_mttr < 86400:
+                    dora["mttr_grade"] = "High"
+                else:
+                    dora["mttr_grade"] = "Medium"
+            except:
+                dora["mttr_seconds"] = None
+                dora["mttr_grade"] = "N/A"
+
+            # 4. Change Failure Rate
+            try:
+                total_r = await session.execute(sql_text(
+                    "SELECT COUNT(*) FROM pipeline_runs WHERE started_at >= NOW() - INTERVAL '30 days'"
+                ))
+                total_runs = total_r.scalar() or 0
+
+                failed_r = await session.execute(sql_text(
+                    "SELECT COUNT(*) FROM pipeline_runs WHERE status IN ('FAILURE', 'FAILED') AND started_at >= NOW() - INTERVAL '30 days'"
+                ))
+                failed_runs = failed_r.scalar() or 0
+
+                dora["change_failure_rate"] = round((failed_runs / total_runs * 100), 1) if total_runs > 0 else 0
+                dora["total_pipeline_runs"] = total_runs
+                dora["failed_pipeline_runs"] = failed_runs
+                # Grade: Elite (<5%), High (<10%), Medium (<15%), Low (>15%)
+                if dora["change_failure_rate"] <= 5:
+                    dora["cfr_grade"] = "Elite"
+                elif dora["change_failure_rate"] <= 10:
+                    dora["cfr_grade"] = "High"
+                elif dora["change_failure_rate"] <= 15:
+                    dora["cfr_grade"] = "Medium"
+                else:
+                    dora["cfr_grade"] = "Low"
+            except:
+                dora["change_failure_rate"] = 0
+                dora["cfr_grade"] = "N/A"
+
+            # Overall DORA Grade
+            grades = [dora.get("df_grade"), dora.get("lt_grade"), dora.get("mttr_grade"), dora.get("cfr_grade")]
+            grade_scores = {"Elite": 4, "High": 3, "Medium": 2, "Low": 1, "N/A": 0}
+            avg_score = sum(grade_scores.get(g, 0) for g in grades) / max(len([g for g in grades if g != "N/A"]), 1)
+            if avg_score >= 3.5:
+                dora["overall_grade"] = "Elite"
+            elif avg_score >= 2.5:
+                dora["overall_grade"] = "High"
+            elif avg_score >= 1.5:
+                dora["overall_grade"] = "Medium"
+            else:
+                dora["overall_grade"] = "Low"
+
+            return dora
     except Exception as e:
         return {"error": str(e)}
 

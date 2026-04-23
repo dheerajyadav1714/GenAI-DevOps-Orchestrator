@@ -1,119 +1,236 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
-const activities = [
-  { id: 1, agent: 'Agent Alpha-7', time: 'T-0.4s', desc: 'Investigating latency spike in US-West cluster.', type: 'primary', details: ['Analyzing heap dump...', 'Found memory leak in Node.js service...', 'Applying temporary GC patch.'] },
-  { id: 2, agent: 'Agent Beta-2', time: 'T-2.1m', desc: 'Resolved data sync conflict in EU-Central.', type: 'secondary', details: ['Rollback to transaction ID #99284', 'Sync restored. Status: Healthy.'] },
-  { id: 3, agent: 'Agent Gamma-9', time: 'T-15m', desc: 'Routine log rotation completed AP-South.', type: 'muted', details: [] },
+const API_BASE = "https://devops-orchestrator-v2-688623456290.us-central1.run.app";
+
+const GRADE_COLORS = {
+  Elite: { bg: 'from-emerald-500/20 to-emerald-500/5', text: 'text-emerald-400', border: 'border-emerald-500/30', dot: 'bg-emerald-400' },
+  High: { bg: 'from-sky-500/20 to-sky-500/5', text: 'text-sky-400', border: 'border-sky-500/30', dot: 'bg-sky-400' },
+  Medium: { bg: 'from-amber-500/20 to-amber-500/5', text: 'text-amber-400', border: 'border-amber-500/30', dot: 'bg-amber-400' },
+  Low: { bg: 'from-red-500/20 to-red-500/5', text: 'text-red-400', border: 'border-red-500/30', dot: 'bg-red-400' },
+  'N/A': { bg: 'from-gray-500/20 to-gray-500/5', text: 'text-gray-400', border: 'border-gray-500/30', dot: 'bg-gray-400' },
+};
+
+const AGENTS = [
+  { name: 'Agile PM', icon: 'assignment', tools: ['Jira CRUD', 'Sprint Health', 'User Stories'], status: 'online' },
+  { name: 'Platform Architect', icon: 'architecture', tools: ['Multi-Agent Debate', 'Terraform Gen', 'Migration Design'], status: 'online' },
+  { name: 'DevOps Engineer', icon: 'build_circle', tools: ['Pipeline Gen', 'Jenkins', 'Chaos Engineering'], status: 'online' },
+  { name: 'SRE', icon: 'monitoring', tools: ['Log Analysis', 'Bug Fix', 'Postmortem', 'Risk Prediction'], status: 'online' },
+  { name: 'FinOps Director', icon: 'savings', tools: ['Cost Optimizer', 'Resource Right-Sizing'], status: 'online' },
+  { name: 'Security Engineer', icon: 'shield', tools: ['Vulnerability Scan', 'Drift Detection', 'Compliance'], status: 'online' },
+  { name: 'QA Engineer', icon: 'bug_report', tools: ['Test Generator', 'Code Review'], status: 'online' },
+  { name: 'Cloud Engineer', icon: 'cloud', tools: ['GCP Explorer', 'Terraform Remediation', 'Provisioning'], status: 'online' },
 ];
 
-export default function DashboardView() {
+export default function DashboardView({ metrics }) {
+  const [dora, setDora] = useState(null);
+  const [hoveredAgent, setHoveredAgent] = useState(null);
+
+  useEffect(() => {
+    fetchDora();
+    const interval = setInterval(fetchDora, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  async function fetchDora() {
+    try {
+      const res = await fetch(`${API_BASE}/metrics/dora`);
+      if (res.ok) setDora(await res.json());
+    } catch (e) { /* silent */ }
+  }
+
+  const gc = (grade) => GRADE_COLORS[grade] || GRADE_COLORS['N/A'];
+
   return (
-    <div className="flex-1 flex flex-col lg:flex-row p-6 gap-6 overflow-hidden h-full">
-      {/* Left Column: Map & Metrics */}
-      <div className="flex-1 flex flex-col gap-6 overflow-hidden min-h-0">
-        {/* Metric Cards Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 flex-shrink-0">
-          <div className="bg-surface-container rounded-2xl p-6 relative overflow-hidden group border border-outline-variant/20 shadow-lg">
-            <h2 className="text-on-surface-variant text-sm font-semibold uppercase tracking-widest mb-2">Total Incidents</h2>
-            <div className="flex items-end justify-between">
-              <div className="font-mono text-4xl font-black text-on-surface tracking-tighter">1,248</div>
-              <div className="font-mono text-xs text-error mb-1 bg-error/10 px-2 py-1 rounded-full border border-error/20">+12%</div>
-            </div>
+    <div className="flex-1 flex flex-col p-6 gap-5 overflow-y-auto h-full no-scrollbar">
+      
+      {/* Hero Section */}
+      <div className="liquid-glass rounded-3xl p-8 relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-primary/8 via-transparent to-secondary/8 pointer-events-none" />
+        <div className="relative z-10 flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-black tracking-tight text-on-surface">
+              Command Center
+            </h1>
+            <p className="text-sm text-on-surface-variant mt-1 font-medium">
+              Autonomous Cloud Operating System — {metrics?.total_workflows || 0} workflows executed
+            </p>
           </div>
-          <div className="bg-surface-container rounded-2xl p-6 relative overflow-hidden group border border-outline-variant/20 shadow-lg">
-            <h2 className="text-on-surface-variant text-sm font-semibold uppercase tracking-widest mb-2">AI Fixed</h2>
-            <div className="flex items-end justify-between">
-              <div className="font-mono text-4xl font-black text-primary tracking-tighter">892</div>
-              <div className="font-mono text-xs text-secondary mb-1 bg-secondary/10 px-2 py-1 rounded-full border border-secondary/20">71.4%</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Map Container */}
-        <div className="flex-1 bg-surface-container-low rounded-2xl relative overflow-hidden flex flex-col border border-outline-variant/20 shadow-[0_0_50px_rgba(0,0,0,0.3)]">
-          <div className="p-4 flex justify-between items-center border-b border-outline-variant/20 z-10 bg-surface-container-low/80 backdrop-blur-md">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-secondary shadow-[0_0_8px_theme(colors.secondary)] animate-pulse"></div>
-              <h3 className="text-sm text-on-surface font-bold uppercase tracking-widest">Network Topology</h3>
-            </div>
-            <div className="font-mono text-[10px] text-primary font-bold tracking-widest opacity-70">SYS.STATE: OPTIMAL</div>
-          </div>
-
-          <div className="flex-1 relative w-full h-full bg-[#0e0e10]">
-            {/* Topology Visualizer (Simulated) */}
-            <div className="absolute inset-0 opacity-20 pointer-events-none" 
-                 style={{backgroundImage: 'radial-gradient(circle at 2px 2px, #38bdf8 1px, transparent 0)', backgroundSize: '40px 40px'}}></div>
-            
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="relative w-full h-full max-w-4xl max-h-[500px]">
-                {/* Nodes */}
-                <Node x="25%" y="30%" label="US-WEST" color="primary" pulse />
-                <Node x="50%" y="25%" label="EU-CENTRAL" color="secondary" pulse />
-                <Node x="75%" y="65%" label="AP-SOUTH" color="error" />
-                
-                {/* SVG Connections */}
-                <svg className="absolute inset-0 w-full h-full pointer-events-none">
-                  <path d="M 250 150 Q 375 100 500 125" stroke="var(--color-primary)" strokeWidth="1" strokeDasharray="5,5" fill="none" opacity="0.3" />
-                  <path d="M 500 125 Q 625 250 750 325" stroke="var(--color-secondary)" strokeWidth="1" strokeDasharray="5,5" fill="none" opacity="0.3" />
-                </svg>
-              </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
+              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
+              <span className="text-xs font-bold text-emerald-400 tracking-wide uppercase">All Systems Operational</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Right Column: Activity Feed */}
-      <div className="w-full lg:w-96 flex flex-col gap-4 h-full">
-        <div className="flex items-center justify-between px-2 pt-2">
-          <h2 className="text-lg font-bold text-on-surface font-headline">Agent Activity</h2>
-          <span className="font-mono text-[10px] text-outline-variant font-bold tracking-widest uppercase bg-surface-container px-2 py-1 rounded border border-outline-variant/30">Live Stream</span>
-        </div>
+      {/* DORA Metrics Row */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <DoraCard
+          title="Deploy Frequency"
+          value={dora?.deployment_frequency ?? '—'}
+          unit="/day"
+          subtitle={`${dora?.total_deployments_30d ?? 0} deploys (30d)`}
+          grade={dora?.df_grade || 'N/A'}
+          icon="rocket_launch"
+          gc={gc}
+        />
+        <DoraCard
+          title="Lead Time"
+          value={dora?.lead_time_display?.replace(' min', '') ?? '—'}
+          unit="min"
+          subtitle="Commit to Production"
+          grade={dora?.lt_grade || 'N/A'}
+          icon="schedule"
+          gc={gc}
+        />
+        <DoraCard
+          title="MTTR"
+          value={dora?.mttr_display?.replace(' min', '') ?? '—'}
+          unit="min"
+          subtitle="Mean Time to Recovery"
+          grade={dora?.mttr_grade || 'N/A'}
+          icon="speed"
+          gc={gc}
+        />
+        <DoraCard
+          title="Failure Rate"
+          value={dora?.change_failure_rate ?? '—'}
+          unit="%"
+          subtitle={`${dora?.failed_pipeline_runs ?? 0}/${dora?.total_pipeline_runs ?? 0} failed`}
+          grade={dora?.cfr_grade || 'N/A'}
+          icon="error_outline"
+          gc={gc}
+        />
+      </div>
 
-        <div className="flex-1 overflow-y-auto no-scrollbar flex flex-col gap-4">
-          {activities.map((act) => (
-            <div key={act.id} className="refractive-glass rounded-2xl p-5 flex flex-col gap-3 relative overflow-hidden group transition-all duration-300 hover:translate-x-1">
-              <div className={`absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b ${act.type === 'primary' ? 'from-primary to-primary-container' : act.type === 'secondary' ? 'from-secondary to-secondary-container' : 'from-outline-variant to-surface-container'}`}></div>
-              <div className="flex justify-between items-start">
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-primary text-[18px]">smart_toy</span>
-                  <span className="font-bold text-sm tracking-tight">{act.agent}</span>
-                </div>
-                <span className="font-mono text-[10px] text-outline-variant font-bold">{act.time}</span>
-              </div>
-              <p className="text-xs text-on-surface-variant font-medium leading-relaxed">{act.desc}</p>
-              
-              {act.details.length > 0 && (
-                <div className="bg-surface-container-lowest rounded-xl p-3 border border-outline-variant/10 shadow-inner">
-                  <div className="font-mono text-[10px] text-primary mb-1 font-bold tracking-widest uppercase opacity-60">Thought Process:</div>
-                  <div className="font-mono text-[10px] text-on-surface-variant pr-2 space-y-1">
-                    {act.details.map((detail, idx) => (
-                      <div key={idx} className="flex gap-2">
-                        <span className="text-outline-variant opacity-50">#</span>
-                        <span>{detail}</span>
-                      </div>
-                    ))}
+      {/* Operational Metrics Row */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard icon="bug_report" label="Total Incidents" value={metrics?.total_incidents ?? 0} accent="error" />
+        <MetricCard icon="auto_fix_high" label="AI Auto-Fixed" value={metrics?.fixed_incidents ?? 0} accent="primary" />
+        <MetricCard icon="timer" label="Avg MTTR" value={metrics?.avg_mttr_seconds ? `${Math.round(metrics.avg_mttr_seconds)}s` : 'N/A'} accent="secondary" />
+        <MetricCard icon="verified" label="Fix Rate" value={`${metrics?.fix_rate_pct ?? 0}%`} accent="primary" />
+      </div>
+
+      {/* Agent Grid */}
+      <div>
+        <div className="flex items-center gap-3 mb-4 px-1">
+          <span className="material-symbols-outlined text-primary text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>hub</span>
+          <h2 className="text-lg font-black text-on-surface tracking-tight">Autonomous Agent Fleet</h2>
+          <span className="text-[10px] font-mono font-bold tracking-widest text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
+            {AGENTS.length} ACTIVE
+          </span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {AGENTS.map((agent, i) => (
+            <div 
+              key={i}
+              className="liquid-glass rounded-2xl p-4 group cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-lg relative overflow-hidden"
+              onMouseEnter={() => setHoveredAgent(i)}
+              onMouseLeave={() => setHoveredAgent(null)}
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="relative z-10">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center border border-primary/20">
+                    <span className="material-symbols-outlined text-primary text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>{agent.icon}</span>
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-on-surface">{agent.name}</div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
+                      <span className="text-[10px] font-mono text-emerald-400 font-bold uppercase tracking-widest">Online</span>
+                    </div>
                   </div>
                 </div>
-              )}
+                <div className="flex flex-wrap gap-1">
+                  {agent.tools.map((tool, j) => (
+                    <span key={j} className="text-[9px] font-mono px-1.5 py-0.5 rounded-md bg-surface-container-high text-on-surface-variant border border-outline-variant/20">
+                      {tool}
+                    </span>
+                  ))}
+                </div>
+              </div>
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Recent Incidents Table */}
+      {metrics?.recent_incidents?.length > 0 && (
+        <div className="liquid-glass rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-outline-variant/20 flex items-center gap-2">
+            <span className="material-symbols-outlined text-error text-lg">warning</span>
+            <h2 className="text-sm font-black text-on-surface uppercase tracking-wider">Recent Incidents</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-on-surface-variant text-left border-b border-outline-variant/10">
+                  <th className="px-5 py-3 font-bold uppercase tracking-widest text-[10px]">Job</th>
+                  <th className="px-5 py-3 font-bold uppercase tracking-widest text-[10px]">Build</th>
+                  <th className="px-5 py-3 font-bold uppercase tracking-widest text-[10px]">MTTR</th>
+                  <th className="px-5 py-3 font-bold uppercase tracking-widest text-[10px]">Status</th>
+                  <th className="px-5 py-3 font-bold uppercase tracking-widest text-[10px]">Severity</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.recent_incidents.slice(0, 5).map((inc, i) => (
+                  <tr key={i} className="border-b border-outline-variant/5 hover:bg-on-surface/3 transition-colors">
+                    <td className="px-5 py-3 font-mono font-bold text-on-surface">{inc.job || 'N/A'}</td>
+                    <td className="px-5 py-3 font-mono text-on-surface-variant">#{inc.build || '?'}</td>
+                    <td className="px-5 py-3 font-mono text-primary font-bold">{inc.mttr_seconds ? `${Math.round(inc.mttr_seconds)}s` : '—'}</td>
+                    <td className="px-5 py-3">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${inc.status === 'fixed' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
+                        {inc.status || 'unknown'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 font-mono text-on-surface-variant">{inc.severity || 'N/A'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DoraCard({ title, value, unit, subtitle, grade, icon, gc }) {
+  const colors = gc(grade);
+  return (
+    <div className={`liquid-glass rounded-2xl p-5 relative overflow-hidden border ${colors.border}`}>
+      <div className={`absolute inset-0 bg-gradient-to-br ${colors.bg} pointer-events-none`} />
+      <div className="relative z-10">
+        <div className="flex items-center justify-between mb-3">
+          <span className="material-symbols-outlined text-on-surface-variant text-lg opacity-60" style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
+          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${colors.text} bg-current/10 border ${colors.border}`}>
+            {grade}
+          </span>
+        </div>
+        <div className="flex items-baseline gap-1">
+          <span className="font-mono text-3xl font-black text-on-surface tracking-tighter">{value}</span>
+          <span className="text-sm font-bold text-on-surface-variant">{unit}</span>
+        </div>
+        <div className="text-[11px] text-on-surface-variant font-medium mt-1">{title}</div>
+        <div className="text-[10px] text-on-surface-variant/60 font-mono mt-0.5">{subtitle}</div>
       </div>
     </div>
   );
 }
 
-function Node({ x, y, label, color, pulse }) {
-  const colorClass = color === 'primary' ? 'bg-primary' : color === 'secondary' ? 'bg-secondary' : 'bg-error';
-  const shadowClass = color === 'primary' ? 'shadow-[0_0_15px_rgba(142,213,255,0.8)]' : color === 'secondary' ? 'shadow-[0_0_15px_rgba(188,199,222,0.8)]' : 'shadow-[0_0_15px_rgba(255,180,171,0.8)]';
-  
+function MetricCard({ icon, label, value, accent }) {
+  const accentClass = accent === 'primary' ? 'text-primary' : accent === 'error' ? 'text-error' : 'text-secondary';
   return (
-    <div className="absolute" style={{ left: x, top: y, transform: 'translate(-50%, -50%)' }}>
-      <div className={`w-3 h-3 rounded-full ${colorClass} ${shadowClass} z-20`}></div>
-      {pulse && <div className={`w-12 h-12 rounded-full border border-current absolute -inset-[18px] animate-pulse opacity-20 ${color === 'primary' ? 'text-primary' : 'text-secondary'}`}></div>}
-      <span className={`font-mono text-[9px] font-bold mt-3 block bg-surface/80 px-1.5 py-0.5 rounded border border-outline-variant/20 backdrop-blur-sm ${color === 'primary' ? 'text-primary' : color === 'secondary' ? 'text-secondary' : 'text-error'}`}>
-        {label}
-      </span>
+    <div className="liquid-glass rounded-2xl p-4 flex items-center gap-4">
+      <div className={`w-10 h-10 rounded-xl bg-gradient-to-br from-${accent}/15 to-${accent}/5 flex items-center justify-center border border-${accent}/20`}>
+        <span className={`material-symbols-outlined ${accentClass} text-lg`} style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
+      </div>
+      <div>
+        <div className={`font-mono text-xl font-black ${accentClass} tracking-tighter`}>{value}</div>
+        <div className="text-[10px] text-on-surface-variant font-bold uppercase tracking-widest">{label}</div>
+      </div>
     </div>
   );
 }
