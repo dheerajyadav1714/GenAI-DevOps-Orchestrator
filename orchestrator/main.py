@@ -402,9 +402,13 @@ async def process_approval(action_type, pr_number, repo, jira_key, workflow_id, 
         except Exception as e:
             logger.warning(f"Could not load previous architecture for provision step: {e}")
 
-        steps = [{"tool": "migration", "action": "provision", "params": {"repo": repo, "project_name": "enterprise-migration", "approved_architecture": approved_arch}}]
+        steps = [
+            {"tool": "migration", "action": "provision", "params": {"repo": repo, "project_name": "enterprise-migration", "approved_architecture": approved_arch}},
+            {"tool": "pipeline", "action": "generate", "params": {"repo": repo}},
+            {"tool": "finops", "action": "optimize", "params": {"repo": repo, "file_path": "kubernetes/deployment.yaml"}}
+        ]
         new_wfid = str(uuid.uuid4())
-        desc = "Autonomously provision the approved GCP architecture via Terraform"
+        desc = "Autonomously provision the approved GCP architecture, generate CI/CD pipeline, and optimize costs."
         t = threading.Thread(target=run_workflow_sync, args=(new_wfid, desc, "ui_user", steps))
         t.start()
         return {"status": "provisioning_started", "workflow_id": new_wfid}
@@ -628,6 +632,13 @@ Available tools:
 - terraform.provision: {{"project_name": "my-app", "repo": "owner/repo"}}  (zero-touch provisioning: generates Terraform IAC files for a given stack, pushes to a new branch, and creates a PR)
 - terraform.remediate: {{"repo": "owner/repo", "error_log": "IAM Permission Denied..."}}  (diagnose and auto-fix Terraform infrastructure bugs like missing IAM bindings)
 - finops.optimize: {{"repo": "owner/repo", "file_path": "kubernetes/deployment.yaml"}}  (analyze infra/kubernetes files, right-size the limits to save costs, and open a PR)
+- agile.generate_ticket: {{"requirement": "User profile page in Node.js", "project_key": "SCRUM"}}  (Translates a natural language requirement into a detailed Jira User Story with Acceptance Criteria)
+- testing.generate: {{"repo": "owner/repo", "file_path": "src/bug.py"}}  (reads a source file, generates comprehensive pytest unit tests, commits to a branch and opens a PR)
+- deployment.predict_risk: {{"service": "auth service", "repo": "owner/repo"}}  (queries AlloyDB incident history and analyzes current day/time to produce a Deployment Risk Assessment with risk level and recommendations)
+- security.scan_dependencies: {{"repo": "owner/repo"}}  (scans requirements.txt/package.json for known CVEs, generates a security report, patches vulnerable versions, and opens a PR)
+- agile.sprint_health: {{"project_key": "SCRUM"}}  (generates a Sprint Health Report: velocity score, burndown, blockers, and developer activity gaps by querying Jira and GitHub)
+- docs.generate: {{"repo": "owner/repo", "doc_type": "API"}}  (reads repo source code, generates comprehensive documentation, commits to branch, opens PR, and publishes to Confluence)
+- sre.postmortem: {{"service": "auth service outage", "repo": "owner/repo"}}  (auto-generates a blameless Incident Postmortem following Google SRE template using AlloyDB, Jira, and GitHub data, publishes to Confluence)
 - migration.design: {{"repo": "owner/repo", "project_name": "migration", "inventory_csv": "[[PREVIOUS_STEP_RESULT.content]]", "preferences": "cost vs HA"}} (Run Architect/SecOps/FinOps multi-agent debate based on user preferences and the inventory CSV. USE exactly '[[PREVIOUS_STEP_RESULT.content]]' for the inventory_csv parameter to chain read files. Outputs the finalized secure robust architecture and a Mermaid map to the user. MUST wait for user approval before provisioning.)
 - migration.provision: {{"repo": "owner/repo", "project_name": "migration", "approved_architecture": "the confirmed design"}} (ONLY run this AFTER user approves the design. Autonomously writes the Terraform to a new Github branch and opens a PR.)
 
@@ -655,6 +666,7 @@ RULES:
 8. CRITICAL: When using github.create_pr or jira.create_issue, you MUST provide a comprehensive, multi-line string for the `body` or `description` parameter. Never let it be blank or "None". Elaborate professionally on the fix or the issue.
 9. CRITICAL: When user asks to "fix a bug" or "fix the bug in X", you MUST use code.generate_fix as the ONLY step. code.generate_fix already handles everything internally (reads file, generates fix, creates branch, creates PR, notifies Slack). Do NOT add separate jira.create_issue or github.create_pr steps — they will cause duplicates.
 10. CRITICAL: Do NOT use placeholder references like PREVIOUS_STEP_RESULT or step1.key in params. Use actual concrete values. For example, use the actual repo name "dheerajyadav1714/ci_cd", not a reference.
+11. ZERO-TO-CLOUD MASTER WORKFLOW: If the user asks you to handle Agile tickets, provision infrastructure, generate pipelines, and optimize costs all at once, you MUST ONLY output `agile.generate_ticket` and `migration.design`. DO NOT output the provision, pipeline, or finops steps. The Orchestrator will automatically chain those downstream AFTER the user approves the architecture design!
 
 User request: "{user_request}"
 """
@@ -1491,6 +1503,55 @@ Return ONLY the raw SQL query string. No Markdown formatting, no code blocks (e.
                             context["db_result"] = f"### 🔍 Query Transparency\n**SQL Generated:**\n```sql\n{raw_sql}\n```\n**Error:** {sql_err}"
                             result = {"sql": raw_sql, "error": str(sql_err)}
 
+                    # ---------- AGILE TICKET GENERATOR ----------
+                    elif tool == "agile" and action == "generate_ticket":
+                        project = params.get("project_key", "SCRUM")
+                        requirement = params.get("requirement", "No requirement provided")
+                        
+                        logger.info(f"Generating Agile ticket for: {requirement}")
+                        
+                        agile_prompt = f"""You are a Senior Product Owner. Translate this raw requirement into a professional, highly detailed Jira User Story.
+Requirement: {requirement}
+
+Format strict rules:
+- Provide a concise Title (summary).
+- Provide the Description containing:
+  - User Story (As a... I want to... So that...)
+  - Acceptance Criteria (bullet points or Given/When/Then)
+  - Technical Implementation Notes
+Output MUST be a JSON object with two keys: "summary" and "description". Do not use markdown blocks for the JSON."""
+                        
+                        try:
+                            agile_resp = await asyncio.to_thread(gemini_model.generate_content, agile_prompt)
+                            agile_text = agile_resp.text.strip()
+                            if agile_text.startswith("```json"): agile_text = agile_text.replace("```json", "", 1)
+                            if agile_text.startswith("```"): agile_text = agile_text.replace("```", "", 1)
+                            if agile_text.endswith("```"): agile_text = agile_text[:-3]
+                            
+                            agile_data = json.loads(agile_text.strip())
+                            
+                            # Create Issue via MCP
+                            jira_payload = {
+                                "project_key": project,
+                                "summary": agile_data.get("summary", "Generated User Story"),
+                                "description": agile_data.get("description", "Generated Description"),
+                                "issue_type": "Story"
+                            }
+                            resp = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['jira']}/issue", json=jira_payload, timeout=30)
+                            jira_result = resp.json()
+                            context["agile_ticket"] = jira_result
+                            
+                            # Notify Slack
+                            slack_msg = f"📝 *New User Story Created!*\n*Title:* {jira_payload['summary']}\n*Jira:* {jira_result.get('key', 'Unknown')}"
+                            try: requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": slack_msg}, timeout=15)
+                            except: pass
+                            
+                            result = {"status": "ticket_created", "jira_key": jira_result.get("key"), "summary": jira_payload["summary"]}
+                            
+                        except Exception as agile_err:
+                            logger.error(f"Agile ticket generation failed: {agile_err}")
+                            result = {"error": str(agile_err)}
+
                     # ---------- PIPELINE GENERATOR ----------
                     elif tool == "pipeline" and action == "generate":
                         pg_repo = params.get("repo", "dheerajyadav1714/ci_cd")
@@ -1578,7 +1639,10 @@ Output ONLY the raw Jenkinsfile content. No markdown code fences."""
                         except Exception:
                             pass
 
-                        result = {"status": "generated", "repo": pg_repo, "committed": committed, "stages": 7}
+                        result = {
+                            "status": "generated", "repo": pg_repo, "committed": committed, "stages": 7,
+                            "oldCode": "# No existing CI/CD pipeline detected.", "newCode": jenkinsfile_content, "file_path": "Jenkinsfile"
+                        }
 
                     # ---------- FINOPS COST OPTIMIZER ----------
                     elif tool == "finops" and action == "optimize":
@@ -2098,6 +2162,494 @@ Return ONLY the full modified Python file content with the bug injected. Add a c
 
                         result = {"status": "chaos_injected", "repo": chaos_repo, "file": target_file, "committed": chaos_committed}
 
+                    # ---------- AI TEST CASE GENERATOR ----------
+                    elif tool == "testing" and action == "generate":
+                        tg_repo = params.get("repo", "dheerajyadav1714/ci_cd")
+                        tg_file = params.get("file_path", "src/bug.py")
+                        logger.info(f"🧪 Generating tests for {tg_repo}/{tg_file}")
+
+                        # 1. Read the source file
+                        source_code = ""
+                        try:
+                            src_resp = requests.get(f"{MCP_SERVERS['github']}/file", params={"repo": tg_repo, "path": tg_file, "branch": "main"}, timeout=15)
+                            if src_resp.status_code == 200:
+                                source_code = src_resp.json().get("content", "")
+                        except Exception as tg_err:
+                            logger.warning(f"Test gen source read failed: {tg_err}")
+
+                        # 2. Generate tests with Gemini
+                        tg_prompt = f"""You are a Senior QA Engineer. Generate comprehensive unit tests for this source file.
+
+Source file: {tg_file}
+```
+{source_code}
+```
+
+Requirements:
+1. Use pytest as the testing framework
+2. Test ALL functions and edge cases (happy path, error cases, boundary values)
+3. Use descriptive test names (test_function_name_scenario_expected_result)
+4. Add docstrings explaining what each test validates
+5. Include fixtures where appropriate
+6. Aim for >90% code coverage
+
+Output ONLY the raw Python test file content. No markdown fences."""
+
+                        tg_resp = await asyncio.to_thread(gemini_model.generate_content, tg_prompt)
+                        test_code = tg_resp.text.strip()
+                        if test_code.startswith("```"):
+                            test_code = re.sub(r'^```\w*\n?', '', test_code)
+                            test_code = re.sub(r'\n?```$', '', test_code)
+
+                        # 3. Determine test file path
+                        test_filename = "test_" + tg_file.split("/")[-1]
+                        test_dir = "/".join(tg_file.split("/")[:-1])
+                        test_path = f"{test_dir}/{test_filename}" if test_dir else test_filename
+
+                        # 4. Commit to branch and create PR
+                        tg_branch = f"tests/auto-generate-{str(uuid.uuid4())[:6]}"
+                        tg_pr_url = None
+                        try:
+                            requests.post(f"{MCP_SERVERS['github']}/branch", json={"repo": tg_repo, "branch": tg_branch, "base": "main"}, timeout=15)
+                            cc = requests.post(f"{MCP_SERVERS['github']}/commit", json={
+                                "repo": tg_repo, "branch": tg_branch, "path": test_path,
+                                "content": test_code, "message": f"test: Auto-generate unit tests for {tg_file}"
+                            }, timeout=15)
+                            if cc.status_code == 200:
+                                pr = requests.post(f"{MCP_SERVERS['github']}/pr", json={
+                                    "repo": tg_repo, "title": f"🧪 Auto-Generated Tests for {tg_file}",
+                                    "head": tg_branch, "base": "main",
+                                    "body": f"## 🧪 AI-Generated Unit Tests\n\nThis PR contains auto-generated pytest test cases for `{tg_file}`.\n\n**Coverage Target:** >90%\n**Test Framework:** pytest\n\n> Auto-generated by GenAI DevOps Orchestrator."
+                                }, timeout=15)
+                                if pr.status_code in [200, 201]:
+                                    tg_pr_url = pr.json().get("html_url")
+                        except Exception as tg_pr_err:
+                            logger.warning(f"Test gen PR failed: {tg_pr_err}")
+
+                        # 5. Slack notification
+                        try:
+                            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"🧪 *Unit Tests Auto-Generated!*\nFile: `{tg_file}` → Tests: `{test_path}`\n{'PR: ' + tg_pr_url if tg_pr_url else 'Commit pending'}"}, timeout=15)
+                        except: pass
+
+                        result = {
+                            "status": "tests_generated", "repo": tg_repo, "test_file": test_path,
+                            "pr_url": tg_pr_url, "oldCode": f"# No tests existed for {tg_file}", "newCode": test_code, "file_path": test_path
+                        }
+
+                    # ---------- PREDICTIVE DEPLOYMENT RISK SCORING ----------
+                    elif tool == "deployment" and action == "predict_risk":
+                        pr_service = params.get("service", params.get("file_path", "auth service"))
+                        pr_repo = params.get("repo", "dheerajyadav1714/ci_cd")
+                        logger.info(f"🔮 Predicting deployment risk for: {pr_service}")
+
+                        # 1. Query AlloyDB for historical incident data
+                        incident_history = ""
+                        try:
+                            async with async_session() as db_sess:
+                                hist_result = await db_sess.execute(
+                                    sql_text("SELECT id, description, status, created_at FROM workflows ORDER BY created_at DESC LIMIT 20")
+                                )
+                                rows = hist_result.fetchall()
+                                incident_history = "\n".join([f"- {r[1]} | Status: {r[2]} | Date: {r[3]}" for r in rows]) or "No historical data available."
+                        except Exception as pr_db_err:
+                            logger.warning(f"Predictive risk DB query failed: {pr_db_err}")
+                            incident_history = "Database unavailable — using general risk heuristics."
+
+                        # 2. Get current time context
+                        import datetime
+                        now = datetime.datetime.now()
+                        day_name = now.strftime("%A")
+                        hour = now.hour
+
+                        # 3. Ask Gemini for risk analysis
+                        risk_prompt = f"""You are a Site Reliability Engineer performing a Deployment Risk Assessment.
+
+Service/File being deployed: {pr_service}
+Repository: {pr_repo}
+Current Day: {day_name}
+Current Hour: {hour}:00
+
+Historical Workflow/Incident Data (last 20):
+{incident_history}
+
+Analyze the risk of deploying RIGHT NOW. Consider:
+1. Day of week (Friday afternoon deployments are historically risky)
+2. Time of day (late evening deploys have less support coverage)
+3. Historical failure patterns from the data above
+4. The criticality of the service being deployed
+
+Output a structured risk report:
+- **Risk Level:** LOW / MEDIUM / HIGH / CRITICAL (with percentage, e.g. "HIGH (72%)")
+- **Risk Factors:** Bullet list of specific concerns
+- **Historical Pattern:** What the data shows
+- **Recommendation:** Deploy now, wait, or deploy with extra monitoring
+- **Suggested Deployment Window:** Best time to deploy based on data"""
+
+                        risk_resp = await asyncio.to_thread(gemini_model.generate_content, risk_prompt)
+                        risk_report = risk_resp.text.strip()
+                        context["risk_report"] = risk_report
+
+                        # 4. Slack alert if high risk
+                        try:
+                            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"🔮 *Deployment Risk Assessment*\nService: `{pr_service}`\nDay: {day_name} {hour}:00\n\n{risk_report[:500]}"}, timeout=15)
+                        except: pass
+
+                        result = {"status": "risk_assessed", "service": pr_service, "report": risk_report}
+
+                    # ---------- DEPENDENCY VULNERABILITY SCANNER ----------
+                    elif tool == "security" and action == "scan_dependencies":
+                        sec_repo = params.get("repo", "dheerajyadav1714/ci_cd")
+                        logger.info(f"🔒 Scanning dependencies for vulnerabilities in {sec_repo}")
+
+                        # 1. Try to read dependency files
+                        dep_content = ""
+                        dep_file = ""
+                        for dep_path in ["requirements.txt", "package.json", "go.mod", "pom.xml"]:
+                            try:
+                                dep_resp = requests.get(f"{MCP_SERVERS['github']}/file", params={"repo": sec_repo, "path": dep_path, "branch": "main"}, timeout=10)
+                                if dep_resp.status_code == 200:
+                                    dep_content = dep_resp.json().get("content", "")
+                                    dep_file = dep_path
+                                    break
+                            except: pass
+
+                        if not dep_content:
+                            dep_content = "No dependency file found"
+                            dep_file = "unknown"
+
+                        # 2. Gemini vulnerability analysis
+                        sec_prompt = f"""You are a Security Engineer performing a Software Composition Analysis (SCA) scan.
+
+Repository: {sec_repo}
+Dependency File: {dep_file}
+```
+{dep_content}
+```
+
+Analyze each dependency for known vulnerabilities (CVEs). For each vulnerability found:
+1. **Package Name** and current version
+2. **CVE ID** (use real CVE IDs if you know them, otherwise use realistic placeholder IDs)
+3. **Severity:** CRITICAL / HIGH / MEDIUM / LOW
+4. **Description:** Brief explanation of the vulnerability
+5. **Fixed Version:** The version that patches the vulnerability
+6. **Recommendation:** Upgrade command
+
+Also generate the PATCHED dependency file with all vulnerable packages upgraded to their safe versions.
+
+Format your response as:
+## 🔒 Security Scan Report
+[vulnerability details]
+
+## Patched {dep_file}
+```
+[patched file content]
+```"""
+
+                        sec_resp = await asyncio.to_thread(gemini_model.generate_content, sec_prompt)
+                        sec_report = sec_resp.text.strip()
+                        context["security_report"] = sec_report
+
+                        # 3. Extract patched content and create PR
+                        patched_content = ""
+                        patched_match = re.search(r'## Patched.*?\n```\w*\n(.*?)\n```', sec_report, re.DOTALL)
+                        if patched_match:
+                            patched_content = patched_match.group(1).strip()
+
+                        sec_pr_url = None
+                        if patched_content and dep_file != "unknown":
+                            sec_branch = f"security/patch-deps-{str(uuid.uuid4())[:6]}"
+                            try:
+                                requests.post(f"{MCP_SERVERS['github']}/branch", json={"repo": sec_repo, "branch": sec_branch, "base": "main"}, timeout=15)
+                                cc = requests.post(f"{MCP_SERVERS['github']}/commit", json={
+                                    "repo": sec_repo, "branch": sec_branch, "path": dep_file,
+                                    "content": patched_content, "message": f"fix(security): Patch vulnerable dependencies in {dep_file}"
+                                }, timeout=15)
+                                if cc.status_code == 200:
+                                    pr = requests.post(f"{MCP_SERVERS['github']}/pr", json={
+                                        "repo": sec_repo, "title": f"🔒 Security: Patch Vulnerable Dependencies",
+                                        "head": sec_branch, "base": "main",
+                                        "body": f"## 🔒 Dependency Vulnerability Patch\n\nThis PR upgrades vulnerable packages identified by the AI Security Scanner.\n\n{sec_report[:2000]}\n\n> Auto-generated by GenAI DevOps Orchestrator."
+                                    }, timeout=15)
+                                    if pr.status_code in [200, 201]:
+                                        sec_pr_url = pr.json().get("html_url")
+                            except Exception as sec_pr_err:
+                                logger.warning(f"Security PR failed: {sec_pr_err}")
+
+                        # 4. Slack alert
+                        try:
+                            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"🔒 *Security Scan Complete for `{sec_repo}`*\nDependency file: `{dep_file}`\n{'🚨 Vulnerabilities found! PR: ' + sec_pr_url if sec_pr_url else '✅ Analysis complete.'}"}, timeout=15)
+                        except: pass
+
+                        result = {
+                            "status": "scan_complete", "repo": sec_repo, "dependency_file": dep_file,
+                            "pr_url": sec_pr_url,
+                            "oldCode": dep_content if dep_file != "unknown" else "",
+                            "newCode": patched_content if patched_content else dep_content,
+                            "file_path": dep_file
+                        }
+
+                    # ---------- SPRINT HEALTH DASHBOARD ----------
+                    elif tool == "agile" and action == "sprint_health":
+                        sh_project = params.get("project_key", "SCRUM")
+                        logger.info(f"📊 Generating Sprint Health Report for {sh_project}")
+
+                        # 1. Fetch current sprint tickets from Jira
+                        sprint_data = []
+                        try:
+                            jql = f"project = {sh_project} AND sprint in openSprints() ORDER BY status ASC"
+                            j_resp = requests.get(f"{MCP_SERVERS['jira']}/search", params={"jql": jql}, timeout=15)
+                            if j_resp.status_code == 200:
+                                sprint_data = j_resp.json() if isinstance(j_resp.json(), list) else j_resp.json().get("issues", [])
+                        except Exception as sh_err:
+                            logger.warning(f"Sprint health Jira fetch failed: {sh_err}")
+                            # Fallback: get all tickets
+                            try:
+                                jql_fallback = f"project = {sh_project} ORDER BY updated DESC"
+                                j_resp2 = requests.get(f"{MCP_SERVERS['jira']}/search", params={"jql": jql_fallback}, timeout=15)
+                                if j_resp2.status_code == 200:
+                                    sprint_data = j_resp2.json() if isinstance(j_resp2.json(), list) else j_resp2.json().get("issues", [])
+                            except: pass
+
+                        # 2. Fetch recent GitHub activity
+                        gh_activity = []
+                        try:
+                            pr_resp = requests.get(f"{MCP_SERVERS['github']}/prs", params={"repo": "dheerajyadav1714/ci_cd", "state": "all"}, timeout=15)
+                            if pr_resp.status_code == 200:
+                                gh_data = pr_resp.json()
+                                gh_activity = gh_data if isinstance(gh_data, list) else gh_data.get("pulls", gh_data.get("prs", []))
+                        except: pass
+
+                        # 3. Build context for Gemini
+                        tickets_summary = ""
+                        for t in sprint_data[:20]:
+                            fields = t.get("fields", t)
+                            key = t.get("key", "?")
+                            summary = fields.get("summary", "No summary")
+                            status = fields.get("status", {})
+                            status_name = status.get("name", status) if isinstance(status, dict) else str(status)
+                            assignee = fields.get("assignee", {})
+                            assignee_name = assignee.get("displayName", "Unassigned") if isinstance(assignee, dict) else str(assignee) if assignee else "Unassigned"
+                            tickets_summary += f"- {key}: {summary} | Status: {status_name} | Assignee: {assignee_name}\n"
+
+                        pr_summary = "\n".join([f"- PR #{p.get('number','?')}: {p.get('title','?')} ({p.get('state','?')})" for p in gh_activity[:10]]) or "No PR activity."
+
+                        sh_prompt = f"""You are a Scrum Master AI. Generate a comprehensive Sprint Health Report.
+
+Project: {sh_project}
+
+Current Sprint Tickets ({len(sprint_data)} total):
+{tickets_summary or 'No tickets found.'}
+
+Recent GitHub PR Activity:
+{pr_summary}
+
+Generate a report with:
+1. **Sprint Velocity Score** (percentage of tickets Done vs Total, grade A-F)
+2. **Burndown Status** (On Track / At Risk / Behind)
+3. **Ticket Status Breakdown** (how many in each status: To Do, In Progress, Done)
+4. **🚨 Blockers** (tickets stuck In Progress for too long, or unassigned tickets)
+5. **Developer Activity Gaps** (developers with tickets but no recent PR activity)
+6. **Recommendations** (specific actions to get the sprint back on track)
+
+Be specific. Use the actual ticket keys and developer names from the data."""
+
+                        sh_resp = await asyncio.to_thread(gemini_model.generate_content, sh_prompt)
+                        health_report = sh_resp.text.strip()
+                        context["sprint_health"] = health_report
+
+                        # 4. Slack summary
+                        try:
+                            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"📊 *Sprint Health Report Generated*\nProject: `{sh_project}`\nTickets tracked: {len(sprint_data)}\nPRs analyzed: {len(gh_activity)}"}, timeout=15)
+                        except: pass
+
+                        result = {"status": "health_report_generated", "project": sh_project, "tickets_count": len(sprint_data), "report": health_report}
+
+                    # ---------- AUTO-DOCUMENTATION GENERATOR ----------
+                    elif tool == "docs" and action == "generate":
+                        doc_repo = params.get("repo", "dheerajyadav1714/ci_cd")
+                        doc_type = params.get("doc_type", "API")
+                        logger.info(f"📝 Generating {doc_type} documentation for {doc_repo}")
+
+                        # 1. Read repo structure
+                        repo_files = []
+                        try:
+                            rf_resp = requests.get(f"{MCP_SERVERS['github']}/contents", params={"repo": doc_repo, "path": "", "branch": "main"}, timeout=15)
+                            if rf_resp.status_code == 200:
+                                repo_files = rf_resp.json() if isinstance(rf_resp.json(), list) else rf_resp.json().get("contents", [])
+                        except: pass
+
+                        file_names = [f.get("name", "") if isinstance(f, dict) else str(f) for f in repo_files]
+
+                        # 2. Read key source files
+                        source_contents = {}
+                        key_extensions = [".py", ".js", ".ts", ".go", ".java"]
+                        for f in repo_files[:15]:
+                            fname = f.get("name", "") if isinstance(f, dict) else str(f)
+                            if any(fname.endswith(ext) for ext in key_extensions):
+                                try:
+                                    fc_resp = requests.get(f"{MCP_SERVERS['github']}/file", params={"repo": doc_repo, "path": fname, "branch": "main"}, timeout=10)
+                                    if fc_resp.status_code == 200:
+                                        source_contents[fname] = fc_resp.json().get("content", "")[:3000]
+                                except: pass
+
+                        sources_text = "\n\n".join([f"### {k}\n```\n{v}\n```" for k, v in source_contents.items()]) or "No source files readable."
+
+                        # 3. Generate docs with Gemini
+                        doc_prompt = f"""You are a Technical Writer. Generate comprehensive {doc_type} documentation for this repository.
+
+Repository: {doc_repo}
+Files in root: {', '.join(file_names[:30])}
+
+Source Code:
+{sources_text}
+
+Generate professional documentation including:
+1. **Project Overview** — What this project does
+2. **Architecture** — How the components fit together
+3. **API Reference** — All endpoints/functions with parameters, return types, and examples
+4. **Setup & Installation** — How to get started
+5. **Configuration** — Environment variables and config options
+6. **Usage Examples** — Real code examples
+7. **Contributing** — How to contribute
+
+Format as clean Markdown suitable for a README.md or docs site."""
+
+                        doc_resp = await asyncio.to_thread(gemini_model.generate_content, doc_prompt)
+                        docs_content = doc_resp.text.strip()
+                        context["generated_docs"] = docs_content
+
+                        # 4. Commit docs to branch and create PR
+                        doc_branch = f"docs/auto-generate-{str(uuid.uuid4())[:6]}"
+                        doc_pr_url = None
+                        try:
+                            requests.post(f"{MCP_SERVERS['github']}/branch", json={"repo": doc_repo, "branch": doc_branch, "base": "main"}, timeout=15)
+                            cc = requests.post(f"{MCP_SERVERS['github']}/commit", json={
+                                "repo": doc_repo, "branch": doc_branch, "path": "DOCS.md",
+                                "content": docs_content, "message": f"docs: Auto-generate {doc_type} documentation"
+                            }, timeout=15)
+                            if cc.status_code == 200:
+                                pr = requests.post(f"{MCP_SERVERS['github']}/pr", json={
+                                    "repo": doc_repo, "title": f"📝 Auto-Generated {doc_type} Documentation",
+                                    "head": doc_branch, "base": "main",
+                                    "body": f"## 📝 AI-Generated Documentation\n\nThis PR adds comprehensive {doc_type} documentation generated by analyzing the repository source code.\n\n> Auto-generated by GenAI DevOps Orchestrator."
+                                }, timeout=15)
+                                if pr.status_code in [200, 201]:
+                                    doc_pr_url = pr.json().get("html_url")
+                        except Exception as doc_err:
+                            logger.warning(f"Docs PR failed: {doc_err}")
+
+                        # 5. Publish to Confluence
+                        conf_published = False
+                        try:
+                            conf_resp = requests.post(f"{MCP_SERVERS['confluence']}/pages", json={
+                                "space": "DEVOPS",
+                                "title": f"{doc_type} Documentation — {doc_repo.split('/')[-1]} — {str(uuid.uuid4())[:6]}",
+                                "content": docs_content
+                            }, timeout=30)
+                            if conf_resp.status_code == 200:
+                                conf_published = True
+                        except: pass
+
+                        # 6. Slack
+                        try:
+                            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"📝 *{doc_type} Documentation Generated for `{doc_repo}`*\n{'PR: ' + doc_pr_url if doc_pr_url else ''}\nConfluence: {'✅ Published' if conf_published else '⚠️ Not published'}"}, timeout=15)
+                        except: pass
+
+                        result = {"status": "docs_generated", "repo": doc_repo, "pr_url": doc_pr_url, "confluence_published": conf_published}
+
+                    # ---------- INCIDENT POSTMORTEM GENERATOR ----------
+                    elif tool == "sre" and action == "postmortem":
+                        pm_service = params.get("service", params.get("incident", "recent incident"))
+                        pm_repo = params.get("repo", "dheerajyadav1714/ci_cd")
+                        logger.info(f"🚨 Generating incident postmortem for: {pm_service}")
+
+                        # 1. Query AlloyDB for recent workflow/incident history
+                        incident_data = ""
+                        try:
+                            async with async_session() as db_sess:
+                                inc_result = await db_sess.execute(
+                                    sql_text("SELECT id, description, status, plan, created_at, completed_at FROM workflows ORDER BY created_at DESC LIMIT 10")
+                                )
+                                rows = inc_result.fetchall()
+                                for r in rows:
+                                    incident_data += f"- Workflow: {r[1]} | Status: {r[2]} | Created: {r[4]} | Completed: {r[5]}\n"
+                        except Exception as pm_db_err:
+                            logger.warning(f"Postmortem DB query failed: {pm_db_err}")
+                            incident_data = "Database unavailable."
+
+                        # 2. Fetch recent Jira tickets for context
+                        jira_context = ""
+                        try:
+                            j_resp = requests.get(f"{MCP_SERVERS['jira']}/search", params={"jql": "project = SCRUM ORDER BY updated DESC"}, timeout=15)
+                            if j_resp.status_code == 200:
+                                tickets = j_resp.json() if isinstance(j_resp.json(), list) else j_resp.json().get("issues", [])
+                                for t in tickets[:5]:
+                                    fields = t.get("fields", t)
+                                    jira_context += f"- {t.get('key','?')}: {fields.get('summary', 'No summary')}\n"
+                        except: pass
+
+                        # 3. Fetch recent PRs for timeline
+                        pr_timeline = ""
+                        try:
+                            pr_resp = requests.get(f"{MCP_SERVERS['github']}/prs", params={"repo": pm_repo, "state": "all"}, timeout=15)
+                            if pr_resp.status_code == 200:
+                                prs = pr_resp.json() if isinstance(pr_resp.json(), list) else pr_resp.json().get("pulls", [])
+                                for p in prs[:10]:
+                                    pr_timeline += f"- PR #{p.get('number','?')}: {p.get('title','?')} ({p.get('state','?')})\n"
+                        except: pass
+
+                        # 4. Generate postmortem with Gemini (Google SRE template)
+                        pm_prompt = f"""You are a Senior SRE writing a Blameless Incident Postmortem following the Google SRE Handbook template.
+
+Incident: {pm_service}
+Repository: {pm_repo}
+
+Recent Orchestrator Workflows:
+{incident_data or 'No data available.'}
+
+Related Jira Tickets:
+{jira_context or 'No tickets found.'}
+
+Recent Pull Request Activity:
+{pr_timeline or 'No PR data.'}
+
+Generate a professional, blameless postmortem with these sections:
+## 🚨 Incident Postmortem: {pm_service}
+### Executive Summary
+### Timeline (with realistic timestamps)
+### Root Cause Analysis (5 Whys technique)
+### Impact Assessment (users affected, duration, severity)
+### Detection & Response
+### Resolution
+### Action Items (with owners and deadlines)
+### Lessons Learned
+### Prevention Measures
+
+Be thorough and professional. Use the actual data provided to construct a realistic timeline."""
+
+                        pm_resp = await asyncio.to_thread(gemini_model.generate_content, pm_prompt)
+                        postmortem_text = pm_resp.text.strip()
+                        context["postmortem"] = postmortem_text
+
+                        # 5. Publish to Confluence
+                        pm_conf = False
+                        try:
+                            conf_resp = requests.post(f"{MCP_SERVERS['confluence']}/pages", json={
+                                "space": "DEVOPS",
+                                "title": f"Postmortem — {pm_service} — {str(uuid.uuid4())[:6]}",
+                                "content": postmortem_text
+                            }, timeout=30)
+                            if conf_resp.status_code == 200:
+                                pm_conf = True
+                        except: pass
+
+                        # 6. Slack
+                        try:
+                            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"🚨 *Incident Postmortem Published*\nIncident: `{pm_service}`\nConfluence: {'✅ Published' if pm_conf else '⚠️ Not published'}\n\nPlease review the postmortem and assign action item owners."}, timeout=15)
+                        except: pass
+
+                        result = {"status": "postmortem_generated", "service": pm_service, "confluence_published": pm_conf}
+
                 except Exception as e:
                     logger.error(f"Step {tool}.{action} failed: {e}")
                     result = {"error": str(e)}
@@ -2385,6 +2937,42 @@ async def gcp_monitoring_webhook(request: Request, background_tasks: BackgroundT
         return {"status": "processing", "message": f"GCP Alert {incident_id} escalated to AI Orchestrator."}
     except Exception as e:
         logger.error(f"GCP Webhook error: {e}")
+        return {"status": "error", "detail": str(e)}
+
+@app.post("/webhook/gcp_audit")
+async def gcp_audit_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Infrastructure Drift Detection: receives GCP Audit Log events and auto-remediates unauthorized manual changes."""
+    try:
+        data = await request.json()
+        # Parse GCP Audit Log format
+        method_name = data.get("protoPayload", {}).get("methodName", data.get("method", "unknown"))
+        resource_name = data.get("protoPayload", {}).get("resourceName", data.get("resource", "unknown"))
+        principal = data.get("protoPayload", {}).get("authenticationInfo", {}).get("principalEmail", data.get("principal", "unknown@example.com"))
+        description = data.get("description", f"Manual change detected: {method_name} on {resource_name} by {principal}")
+
+        logger.info(f"🛡️ GCP AUDIT LOG DRIFT DETECTED: {description}")
+
+        # Notify Slack immediately
+        try:
+            requests.post(f"{MCP_SERVERS['slack']}/send", json={
+                "text": f"🚨 *Infrastructure Drift Detected!*\n*Action:* `{method_name}`\n*Resource:* `{resource_name}`\n*By:* `{principal}`\n\n⚙️ The AI Orchestrator is analyzing the drift and generating a compliance revert PR..."
+            }, timeout=15)
+        except: pass
+
+        # Trigger the orchestrator to remediate the drift
+        workflow_id = str(uuid.uuid4())
+        drift_request = f"INFRASTRUCTURE DRIFT ALERT! A manual change was detected in GCP. Action: '{method_name}' on resource '{resource_name}' by '{principal}'. {description}. Read the current Terraform files from the repository, identify what was manually changed, generate the corrective Terraform code to revert the unauthorized change, and open a compliance PR. Use terraform.remediate with the error log describing the drift."
+
+        steps = [{"tool": "terraform", "action": "remediate", "params": {
+            "repo": "dheerajyadav1714/ci_cd",
+            "error_log": f"Infrastructure Drift: {method_name} executed on {resource_name} by {principal}. This change was not in the Terraform state. Generate Terraform code to enforce the correct state and revert the manual modification."
+        }}]
+        t = threading.Thread(target=run_workflow_sync, args=(workflow_id, drift_request, "gcp_audit", steps))
+        t.start()
+
+        return {"status": "drift_remediation_started", "workflow_id": workflow_id, "message": f"Drift on {resource_name} detected. Auto-remediation initiated."}
+    except Exception as e:
+        logger.error(f"GCP Audit webhook error: {e}")
         return {"status": "error", "detail": str(e)}
 
 

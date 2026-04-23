@@ -201,7 +201,7 @@ const markdownComponents = {
 };
 
 // ─── Main ChatView ───────────────────────────────────────────────────────────
-export default function ChatView({ activeAgent, messages, isLoading, onSendMessage, onClearChat, onApproveAction }) {
+export default function ChatView({ activeAgent, messages, isLoading, onSendMessage, onClearChat, onApproveAction, onChaosInject }) {
   const [input, setInput] = useState('');
   const scrollRef = useRef(null);
 
@@ -370,21 +370,21 @@ export default function ChatView({ activeAgent, messages, isLoading, onSendMessa
                         </ReactMarkdown>
                       </div>
 
-                      {/* Interactive Code Diff Viewer */}
-                      {msg.diff && (
-                        <div className="mt-2 border border-outline-variant/30 rounded-xl overflow-hidden shadow-sm">
+                      {/* Interactive Code Diff Viewers */}
+                      {(msg.diffs || (msg.diff ? [msg.diff] : [])).map((d, dIdx) => (
+                        <div key={dIdx} className="mt-2 border border-outline-variant/30 rounded-xl overflow-hidden shadow-sm">
                           <div className="bg-surface-container-high px-4 py-2 border-b border-outline-variant/30 flex justify-between items-center gap-2">
-                            <span className="text-[10px] font-bold font-mono text-on-surface-variant uppercase tracking-widest truncate">{msg.diff.filename || 'infra/main.tf'}</span>
+                            <span className="text-[10px] font-bold font-mono text-on-surface-variant uppercase tracking-widest truncate">{d.filename || 'infra/main.tf'}</span>
                             <div className="flex items-center gap-2 shrink-0">
-                              <CopyButton text={msg.diff.newCode || ''} />
+                              <CopyButton text={d.newCode || ''} />
                               <span className="text-[10px] bg-primary/20 text-primary px-2 py-0.5 rounded uppercase font-bold">Proposed Patch</span>
                             </div>
                           </div>
                           <div className="max-h-[400px] overflow-y-auto w-full overflow-x-auto border-t border-outline-variant/10">
                             <div className="min-w-[800px]">
                               <ReactDiffViewer 
-                                oldValue={msg.diff.oldCode} 
-                                newValue={msg.diff.newCode} 
+                                oldValue={d.oldCode} 
+                                newValue={d.newCode} 
                                 splitView={false} 
                                 useDarkTheme={true}
                                 hideLineNumbers={false}
@@ -398,13 +398,13 @@ export default function ChatView({ activeAgent, messages, isLoading, onSendMessa
                             </div>
                           </div>
                         </div>
-                      )}
+                      ))}
 
                       {/* Action Cards (Human-in-the-Loop) */}
-                      {msg.actionCard && (
-                        <div className="mt-2 p-4 rounded-xl border border-primary/20 bg-primary/5">
+                      {(msg.actionCards || (msg.actionCard ? [msg.actionCard] : [])).map((card, aIdx) => (
+                        <div key={aIdx} className="mt-2 p-4 rounded-xl border border-primary/20 bg-primary/5">
                           {/* Architecture Decision Header */}
-                          {msg.actionCard.actionType === 'approve_architecture' && (
+                          {card.actionType === 'approve_architecture' && (
                             <div className="flex items-center gap-2 mb-3">
                               <span className="material-symbols-outlined text-primary text-[18px]">architecture</span>
                               <span className="text-xs font-bold text-on-surface">Architecture Review Required</span>
@@ -415,14 +415,14 @@ export default function ChatView({ activeAgent, messages, isLoading, onSendMessa
                             <button 
                               className="flex-1 flex items-center justify-center gap-2 bg-primary text-on-primary py-2.5 px-4 rounded-xl text-xs font-bold hover:bg-primary-container hover:text-on-primary-container transition-all active:scale-95 shadow-sm disabled:opacity-50 disabled:active:scale-100"
                               onClick={() => onApproveAction && onApproveAction(idx)}
-                              disabled={msg.actionCard.status !== 'pending'}
+                              disabled={card.status !== 'pending'}
                             >
                               <span className="material-symbols-outlined text-[16px]">
-                                {msg.actionCard.status === 'approved' ? 'check_circle' : 'rocket_launch'}
+                                {card.status === 'approved' ? 'check_circle' : 'rocket_launch'}
                               </span>
-                              {msg.actionCard.status === 'approved' ? 'Approved & Merged' : 'Approve & Provision'}
+                              {card.status === 'approved' ? 'Approved & Provisioned' : 'Approve & Execute'}
                             </button>
-                            {msg.actionCard.status === 'pending' && (
+                            {card.status === 'pending' && (
                               <button 
                                 className="flex items-center justify-center gap-2 bg-error/10 text-error px-5 py-2.5 rounded-xl text-xs font-bold hover:bg-error/20 transition-all active:scale-95"
                               >
@@ -431,15 +431,15 @@ export default function ChatView({ activeAgent, messages, isLoading, onSendMessa
                               </button>
                             )}
                           </div>
-                          {msg.actionCard.prUrl && (
-                            <a href={msg.actionCard.prUrl} target="_blank" rel="noopener noreferrer"
+                          {card.prUrl && (
+                            <a href={card.prUrl} target="_blank" rel="noopener noreferrer"
                                className="mt-2 flex items-center gap-1.5 text-[11px] text-primary hover:underline">
                               <span className="material-symbols-outlined text-[13px]">open_in_new</span>
                               View PR on GitHub
                             </a>
                           )}
                         </div>
-                      )}
+                      ))}
                     </div>
                   )}
                 </div>
@@ -483,6 +483,16 @@ export default function ChatView({ activeAgent, messages, isLoading, onSendMessa
         <form onSubmit={handleSubmit} className="w-full max-w-3xl rounded-2xl flex items-center px-2 py-2 pointer-events-auto shadow-[0_8px_30px_rgba(0,0,0,0.15)] border border-outline-variant/30 bg-surface-container-lowest backdrop-blur-xl group focus-within:border-primary/50 transition-all">
           <button type="button" className="p-2.5 text-on-surface-variant hover:text-primary transition-colors rounded-xl hover:bg-on-surface/5">
             <span className="material-symbols-outlined text-[20px]">attach_file</span>
+          </button>
+          <button 
+            type="button" 
+            onClick={onChaosInject}
+            disabled={isLoading}
+            className="p-2 text-error hover:bg-error/10 transition-all rounded-xl flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider disabled:opacity-30 group/chaos"
+            title="Inject Chaos — Intentionally break the codebase and watch the AI self-heal"
+          >
+            <span className="material-symbols-outlined text-[18px] group-hover/chaos:animate-spin">cyclone</span>
+            <span className="hidden sm:inline">Chaos</span>
           </button>
           <input 
             type="text"

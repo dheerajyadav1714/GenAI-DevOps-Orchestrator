@@ -117,23 +117,25 @@ export default function Home() {
               .filter((s) => s.tool !== "reply")
               .map((s) => `Triggered ${s.tool}.${s.action} with parameters: ${JSON.stringify(s.params)}`);
 
-            let actionCard = null;
             let diff = null;
+            let actionCard = null;
+            let diffs = [];
+            let actionCards = [];
 
             for (const step of plan) {
               if (step.result) {
-                // If the tool returned a diff, capture it
                 if (step.result.oldCode !== undefined && step.result.newCode !== undefined) {
-                  diff = {
+                  const d = {
                     filename: step.result.file_path || "file",
                     oldCode: step.result.oldCode || "",
                     newCode: step.result.newCode || ""
                   };
+                  diff = d;
+                  diffs.push(d);
                 }
                 
-                // If the tool requires approval (or UI action), capture it
-                if (step.result.status?.includes("created") || step.result.status === "provisioned" || step.result.status === "remediated" || step.result.status === "optimized" || step.result.status === "architecture_drafted") {
-                  actionCard = { 
+                if (step.result.status?.includes("created") || step.result.status === "provisioned" || step.result.status === "remediated" || step.result.status === "optimized" || step.result.status === "architecture_drafted" || step.result.status === "generated") {
+                  const a = { 
                      status: 'pending', 
                      actionType: step.result.status === "architecture_drafted" ? 'approve_architecture' : 'approve',
                      prNumber: step.result.pr_number || null,
@@ -142,6 +144,8 @@ export default function Home() {
                      jiraKey: step.result.jira_key || null,
                      workflowId: workflow_id
                   };
+                  actionCard = a;
+                  actionCards.push(a);
                 }
               }
             }
@@ -151,7 +155,9 @@ export default function Home() {
               content: replyText,
               thought: thoughtSteps,
               diff,
-              actionCard
+              diffs,
+              actionCard,
+              actionCards
             }]);
             fetchMetrics();
           }
@@ -225,9 +231,24 @@ export default function Home() {
             const thoughtSteps = plan.filter(s => s.tool !== "reply").map(s => `Executed: ${s.tool}.${s.action}`);
             
             let diff = null;
+            let diffs = [];
             const provStep = plan.find((s) => s.tool === "migration" && s.action === "provision");
             if (provStep && provStep.result && provStep.result.newCode) {
-              diff = { oldCode: provStep.result.oldCode || "# Target Architecture Placeholder", newCode: provStep.result.newCode || "" };
+              const d = { oldCode: provStep.result.oldCode || "# Target Architecture Placeholder", newCode: provStep.result.newCode || "", filename: provStep.result.file_path || "main.tf" };
+              diff = d;
+              diffs.push(d);
+            }
+            const pipeStep = plan.find((s) => s.tool === "pipeline" && s.action === "generate");
+            if (pipeStep && pipeStep.result && pipeStep.result.newCode) {
+              const d = { oldCode: pipeStep.result.oldCode || "", newCode: pipeStep.result.newCode || "", filename: pipeStep.result.file_path || "Jenkinsfile" };
+              diff = d;
+              diffs.push(d);
+            }
+            const finStep = plan.find((s) => s.tool === "finops" && s.action === "optimize");
+            if (finStep && finStep.result && finStep.result.newCode) {
+              const d = { oldCode: finStep.result.oldCode || "", newCode: finStep.result.newCode || "", filename: finStep.result.file_path || "kubernetes/deployment.yaml" };
+              diff = d;
+              diffs.push(d);
             }
 
             setMessages((prev) => {
@@ -236,7 +257,8 @@ export default function Home() {
                 role: "assistant", 
                 content: replyText,
                 thought: thoughtSteps.length > 0 ? thoughtSteps : ['Autonomously executed Provisioning'],
-                diff
+                diff,
+                diffs
               };
               return updated;
             });
@@ -254,6 +276,10 @@ export default function Home() {
       });
       alert("Failed to approve. Check console or backend logs.");
     }
+  };
+
+  const injectChaos = () => {
+    sendMessage("Inject chaos into the repository dheerajyadav1714/ci_cd. Break the code in src/bug.py and then trigger the Jenkins pipeline to test self-healing.");
   };
 
   return (
@@ -323,6 +349,7 @@ export default function Home() {
                 onSendMessage={sendMessage}
                 onClearChat={clearMessages}
                 onApproveAction={handleApproveAction}
+                onChaosInject={injectChaos}
               />
             )}
           </div>
