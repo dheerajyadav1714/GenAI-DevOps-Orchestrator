@@ -59,3 +59,8 @@ scratch/
 implementation_plan.md
 task.md
 walkthrough.md
+# Node / UI
+node_modules/
+.next/
+out/
+build/
