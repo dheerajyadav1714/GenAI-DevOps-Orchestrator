@@ -675,8 +675,9 @@ Available tools:
 - docs.generate: {{"repo": "owner/repo", "doc_type": "API"}}  (reads repo source code, generates comprehensive documentation, commits to branch, opens PR, and publishes to Confluence)
 - sre.postmortem: {{"service": "auth service outage", "repo": "owner/repo"}}  (auto-generates a blameless Incident Postmortem following Google SRE template using AlloyDB, Jira, and GitHub data, publishes to Confluence)
 - gcp.explore: {{"query": "list all Cloud Run services"}}  (queries LIVE GCP infrastructure — can list Cloud Run services, GKE clusters, Compute instances, Cloud SQL databases, or any GCP resource. Returns real production data.)
-- migration.design: {{"repo": "owner/repo", "project_name": "migration", "inventory_csv": "Optional CSV or requirements", "preferences": "cost vs HA"}} (Run Architect/SecOps/FinOps multi-agent debate. If reading a file first, use exactly '[[PREVIOUS_STEP_RESULT.content]]' for inventory_csv. If no file is mentioned, pass the raw user requirements as inventory_csv or 'None'. Outputs the finalized secure robust architecture and a Mermaid map. MUST wait for user approval before provisioning.)
-- migration.provision: {{"repo": "owner/repo", "project_name": "migration", "approved_architecture": "the confirmed design"}} (ONLY run this AFTER user approves the design. Autonomously writes the Terraform to a new Github branch and opens a PR.)
+- migration.design: {{"repo": "dheerajyadav1714/ci_cd", "project_name": "migration", "inventory_csv": "Optional CSV or raw requirements", "preferences": "cost vs HA"}} (CRITICAL: USE THIS FOR ANY ARCHITECTURE, DESIGN, CLOUD MIGRATION, OR GCP ARCHITECT REQUESTS. If no file is provided to read, pass the user's raw prompt directly into inventory_csv. Outputs finalized secure robust architecture and Mermaid map.)
+- migration.provision: {{"repo": "dheerajyadav1714/ci_cd", "project_name": "migration", "approved_architecture": "the confirmed design"}} (ONLY run this AFTER user approves the design. Autonomously writes the Terraform to a new Github branch and opens a PR.)
+
 
 Jira JQL examples:
 - All tickets: "project = SCRUM ORDER BY created DESC"
@@ -708,9 +709,12 @@ RULES:
 User request: "{user_request}"
 """
             try:
-                response = await asyncio.to_thread(active_model.generate_content, plan_prompt)
-            except Exception as e:
-                logger.warning(f"active_model failed ({e}), falling back to gemini_flash for intent parsing")
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(active_model.generate_content, plan_prompt),
+                    timeout=10.0
+                )
+            except (Exception, asyncio.TimeoutError) as e:
+                logger.warning(f"active_model failed or timed out ({e}), falling back to gemini_flash for intent parsing")
                 response = await asyncio.to_thread(gemini_flash.generate_content, plan_prompt)
             raw = response.text.strip()
             logger.info(f"Gemini plan: {raw}")
@@ -1762,10 +1766,13 @@ Output ONLY the raw updated YAML content. No markdown fences."""
 
                         async def generate_with_fallback(prompt):
                             try:
-                                resp = await asyncio.to_thread(gemini_pro.generate_content, prompt)
+                                resp = await asyncio.wait_for(
+                                    asyncio.to_thread(gemini_pro.generate_content, prompt),
+                                    timeout=15.0
+                                )
                                 return resp.text.strip()
-                            except Exception as e:
-                                logger.warning(f"gemini_pro rate limit or error ({e}), falling back to gemini_flash")
+                            except (Exception, asyncio.TimeoutError) as e:
+                                logger.warning(f"gemini_pro rate limit or timeout ({e}), falling back to gemini_flash")
                                 resp = await asyncio.to_thread(gemini_flash.generate_content, prompt)
                                 return resp.text.strip()
 
