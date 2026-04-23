@@ -1755,25 +1755,67 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                         try: requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"🚀 *Interactive Cloud Migration Initiated for {mig_proj}*\n📥 Ingested live inventory CSV from Repo.\n🎯 User Preferences: {prefs}\n\n🤖 Orchestrating Multi-Agent Debate for target GCP Architecture..."}, timeout=15)
                         except: pass
 
-                        # Agent 1: Architect
-                        arch_prompt = f"You are a Principal Cloud Architect. Here is an on-prem inventory:\n{inventory_csv}\nDesign a modernized GCP architecture based on these user preferences: {prefs}. Output ONLY a detailed architectural description."
-                        arch_resp = await asyncio.to_thread(gemini_model.generate_content, arch_prompt)
+                        # Agent 1: Architect (Gemini Pro for deep reasoning)
+                        arch_prompt = (
+                            f"You are a Principal GCP Cloud Architect with 15+ years of enterprise migration experience.\n"
+                            f"Here is the on-prem inventory or requirements:\n{inventory_csv}\n\n"
+                            f"User preferences: {prefs}\n\n"
+                            "Design a production-grade GCP architecture. You MUST include ALL of the following:\n"
+                            "1. **Networking**: VPC name, subnets with CIDR ranges (e.g., 10.0.1.0/24), Cloud NAT, Cloud Router, VPC Peering if needed\n"
+                            "2. **Compute**: GKE clusters (node pools, machine types, autoscaling min/max) OR Cloud Run services OR Compute Engine MIGs\n"
+                            "3. **Database**: Cloud SQL (HA config, private IP, storage size, read replicas) OR AlloyDB OR Spanner\n"
+                            "4. **Caching**: Memorystore Redis (size, HA mode)\n"
+                            "5. **Load Balancing**: External HTTPS LB with Cloud Armor WAF, SSL certificates, CDN config\n"
+                            "6. **Security**: IAM roles (principle of least privilege), VPC Service Controls, CMEK encryption, private service access\n"
+                            "7. **Monitoring**: Cloud Monitoring dashboards, alerting policies, Cloud Logging sinks, uptime checks\n"
+                            "8. **CI/CD**: Cloud Build triggers, Artifact Registry, deployment pipeline stages\n"
+                            "9. **Environments**: Separate Production and Non-Production (Staging/Dev) with resource sizing differences\n"
+                            "10. **DNS & CDN**: Cloud DNS zones, Cloud CDN configuration\n\n"
+                            "Output a detailed architectural description with specific GCP service names, configurations, and sizing."
+                        )
+                        arch_resp = await asyncio.to_thread(gemini_pro.generate_content, arch_prompt)
                         arch_draft = arch_resp.text.strip()
                         try: requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"🏗️ *Principal Architect Draft:*\n{arch_draft[:1000]}..."}, timeout=15)
                         except: pass
 
-                        # Agent 2: SecOps
+                        # Agent 2: SecOps (Gemini Pro for security depth)
                         await asyncio.sleep(4)
-                        sec_prompt = f"You are a strict GCP SecOps Reviewer. Critique this architecture:\n{arch_draft}\nAppend mandatory enterprise security hard-enforcements (e.g. Private IP, strict IAM). Output the updated architecture."
-                        sec_resp = await asyncio.to_thread(gemini_model.generate_content, sec_prompt)
+                        sec_prompt = (
+                            f"You are a Chief Information Security Officer (CISO) and GCP Security Specialist.\n"
+                            f"Review and harden this architecture:\n{arch_draft}\n\n"
+                            "Apply ALL mandatory enterprise security controls:\n"
+                            "1. **Network Security**: Private Google Access, VPC Service Controls perimeter, Cloud Armor WAF rules (OWASP Top 10), DDoS protection\n"
+                            "2. **Identity & Access**: Workload Identity for GKE, service account least-privilege, no default SA, IAM Conditions\n"
+                            "3. **Data Security**: CMEK encryption (Cloud KMS), data-at-rest and in-transit encryption, VPC-SC for data exfiltration prevention\n"
+                            "4. **Network Isolation**: Private IP for ALL databases, private GKE clusters (no public endpoint), Cloud NAT for egress, firewall rules with specific port/protocol\n"
+                            "5. **Compliance**: Enable Security Command Center, org policies (restrict public IP, enforce uniform bucket access), Binary Authorization for containers\n"
+                            "6. **Secret Management**: Secret Manager for all credentials, no hardcoded secrets\n"
+                            "7. **Logging & Audit**: Cloud Audit Logs enabled, log sinks to BigQuery for SIEM, Data Access logs\n\n"
+                            "Output the COMPLETE updated architecture with security controls integrated (not just a list of changes)."
+                        )
+                        sec_resp = await asyncio.to_thread(gemini_pro.generate_content, sec_prompt)
                         sec_draft = sec_resp.text.strip()
                         try: requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"🔒 *SecOps Reviewer Critique:*\n{sec_draft[:1000]}..."}, timeout=15)
                         except: pass
 
-                        # Agent 3: FinOps
+                        # Agent 3: FinOps (Gemini Pro for cost analysis)
                         await asyncio.sleep(4)
-                        fin_prompt = f"You are a FinOps Director. Review this secure architecture:\n{sec_draft}\nOptimize it for cost (scaling to zero, preemptible nodes, etc) without breaking security. Output the FINAL architectural design payload."
-                        fin_resp = await asyncio.to_thread(gemini_model.generate_content, fin_prompt)
+                        fin_prompt = (
+                            f"You are a FinOps Director and GCP Billing Expert.\n"
+                            f"Review this security-hardened architecture:\n{sec_draft}\n\n"
+                            "Optimize for cost WITHOUT breaking security. Apply these strategies:\n"
+                            "1. **Compute**: Use Spot/Preemptible VMs for non-prod, committed use discounts for prod, right-size machine types\n"
+                            "2. **GKE**: Enable cluster autoscaler, use node auto-provisioning, Spot node pools for batch workloads\n"
+                            "3. **Database**: Use shared-core (db-f1-micro) for dev, HA only in prod, auto-storage increase\n"
+                            "4. **Caching**: Use Basic tier Redis for non-prod, Standard (HA) for prod only\n"
+                            "5. **Scaling**: Cloud Run min-instances=0 for non-prod, min-instances=1 for prod latency\n"
+                            "6. **Storage**: Lifecycle policies (Nearline after 30d, Coldline after 90d), auto-delete old snapshots\n"
+                            "7. **Networking**: Shared VPC to reduce NAT gateway costs, internal traffic to avoid egress charges\n"
+                            "8. **Monitoring**: Budget alerts at 50%, 80%, 100% thresholds\n\n"
+                            "Include estimated monthly cost breakdown by service for both Production and Non-Production.\n"
+                            "Output the FINAL complete architectural design with all optimizations applied."
+                        )
+                        fin_resp = await asyncio.to_thread(gemini_pro.generate_content, fin_prompt)
                         final_arch = fin_resp.text.strip()
                         try: requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"💰 *FinOps Optimization:*\n{final_arch[:1000]}..."}, timeout=15)
                         except: pass
@@ -1786,19 +1828,28 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                         await asyncio.sleep(4)
                         mermaid_prompt = (
                             f"Based on this final GCP architecture:\n{final_arch}\n\n"
-                            "Write a PROFESSIONAL REFERENCE-GRADE Mermaid diagram (graph TD). Rules:\n"
-                            "1. Structure: Use nested subgraphs to separate 'Production' from 'Staging'.\n"
-                            "2. Tiers: Inside each env, use subgraphs for 'Networking', 'Web Tier', 'App Tier', and 'Data Tier'.\n"
-                            "3. Icons: Use emojis in labels for clarity: 🌐 (LB), 🚀 (Cloud Run), 🏛️ (MIG/Compute), 💾 (Cloud SQL), ⚡ (Redis/Cache), 🛡️ (Security/Armor), 📝 (Logs).\n"
-                            "4. Style: Define and apply classDefs for GCP layers:\n"
-                            "   - classDef net fill:#e1f5fe,stroke:#01579b,color:#01579b\n"
-                            "   - classDef compute fill:#e8f5e9,stroke:#1b5e20,color:#1b5e20\n"
-                            "   - classDef data fill:#fff3e0,stroke:#e65100,color:#e65100\n"
-                            "   - classDef secure fill:#fce4ec,stroke:#880e4f,color:#880e4f\n"
-                            "5. Syntax: Start with 'graph TD'. Use double-quotes for ALL labels. Each edge on a new line. NEVER use curly braces {} for multiple connections; write each connection separately (e.g., instead of A --> {B C}, write A --> B and A --> C on separate lines).\n"
-                            "Output ONLY raw mermaid code."
+                            "Write an ENTERPRISE-GRADE Mermaid architecture diagram (graph TD). Rules:\n\n"
+                            "1. **Structure**: Top-level subgraphs for 'Internet / Edge', 'Production Environment', 'Non-Production Environment', and 'Shared Services'.\n"
+                            "2. **Networking Layer**: Inside each environment, show VPC with name, subnets with CIDR ranges in labels (e.g., 'Web Subnet 10.0.1.0/24'), Cloud NAT, Cloud Router.\n"
+                            "3. **Compute Layer**: Show GKE clusters or Cloud Run services with specific details (e.g., 'GKE Autopilot - 3 nodes e2-standard-4').\n"
+                            "4. **Data Layer**: Show databases with config (e.g., 'Cloud SQL HA - db-custom-4-16384 - Private IP'), Memorystore Redis, Cloud Storage buckets.\n"
+                            "5. **Security Layer**: Show Cloud Armor WAF, firewall rules, VPC Service Controls perimeter, IAM boundaries.\n"
+                            "6. **Edge Layer**: External HTTPS LB, Cloud CDN, Cloud DNS, SSL/TLS termination.\n"
+                            "7. **Shared Services**: Cloud Monitoring, Cloud Logging, Secret Manager, Artifact Registry, Cloud Build.\n"
+                            "8. **Icons**: Use emojis: 🌐 (LB/CDN), 🛡️ (Armor/Firewall), 🚀 (Cloud Run/GKE), 💾 (Database), ⚡ (Cache), 📝 (Logging), 🔐 (Security/IAM), 🌍 (DNS), 📦 (Storage), 🔄 (CI/CD).\n"
+                            "9. **Styles**: Apply these classDefs and assign each node to its class:\n"
+                            "   classDef edge fill:#e3f2fd,stroke:#1565c0,color:#1565c0,stroke-width:2px\n"
+                            "   classDef net fill:#e1f5fe,stroke:#01579b,color:#01579b\n"
+                            "   classDef compute fill:#e8f5e9,stroke:#1b5e20,color:#1b5e20,stroke-width:2px\n"
+                            "   classDef data fill:#fff3e0,stroke:#e65100,color:#e65100\n"
+                            "   classDef secure fill:#fce4ec,stroke:#880e4f,color:#880e4f,stroke-width:2px\n"
+                            "   classDef shared fill:#f3e5f5,stroke:#4a148c,color:#4a148c\n"
+                            "   classDef cache fill:#fff8e1,stroke:#f57f17,color:#f57f17\n"
+                            "10. **Connections**: Show data flow with labeled edges (e.g., --'HTTPS 443'-->, --'Private IP'-->, --'VPC Peering'-->). Each connection on a separate line.\n"
+                            "11. **Syntax Rules**: Start with 'graph TD'. Use double-quotes for ALL labels. NEVER use curly braces {} for grouping connections. Write each connection on its own line.\n\n"
+                            "Output ONLY raw mermaid code. Make it comprehensive with 25-40 nodes minimum."
                         )
-                        mm_resp = await asyncio.to_thread(gemini_model.generate_content, mermaid_prompt)
+                        mm_resp = await asyncio.to_thread(gemini_pro.generate_content, mermaid_prompt)
                         mermaid_code = mm_resp.text.strip()
                         if mermaid_code.startswith("```"):
                             mermaid_code = re.sub(r'^```\w*\n?', '', mermaid_code)
