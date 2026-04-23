@@ -45,6 +45,11 @@ export default function Home() {
     }
   }, [isDark]);
 
+  // Reset scroll position when changing views
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [activeView]);
+
   async function fetchMessages() {
     try {
       const res = await fetch(`${API_BASE}/messages?user_id=ui_user&limit=50`);
