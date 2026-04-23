@@ -11,9 +11,9 @@ export default function EtherealSidebar({ activeView, setActiveView, isDark, onT
   ];
 
   return (
-    <aside className="fixed left-0 top-0 h-full w-20 z-[60] border-r border-outline-variant/30 transition-all duration-300 flex flex-col items-center py-8 gap-6 shadow-[20px_0_40px_rgba(0,0,0,0.05)] bg-surface-container-lowest/80 backdrop-blur-2xl">
+    <aside className="fixed bottom-0 md:top-0 left-0 w-full md:w-20 h-20 md:h-full z-[60] border-t md:border-t-0 md:border-r border-outline-variant/30 transition-all duration-300 flex flex-row md:flex-col items-center justify-between md:justify-start px-6 md:px-0 md:py-8 shadow-[0_-10px_30px_rgba(0,0,0,0.05)] md:shadow-[20px_0_40px_rgba(0,0,0,0.05)] bg-surface-container-lowest/90 backdrop-blur-3xl">
       {/* Brand Icon — DevOps infinity loop style */}
-      <div className={`w-11 h-11 rounded-xl flex items-center justify-center mb-4 transition-all duration-500
+      <div className={`hidden md:flex w-11 h-11 rounded-xl items-center justify-center mb-4 transition-all duration-500
         ${isDark ? 'bg-gradient-to-br from-primary to-primary-container shadow-[0_0_20px_rgba(56,189,248,0.4)]' : 'bg-primary shadow-lg'}
       `}>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -25,7 +25,7 @@ export default function EtherealSidebar({ activeView, setActiveView, isDark, onT
       </div>
 
       {/* Navigation Items */}
-      <div className="flex flex-col gap-6 items-center w-full mt-4">
+      <div className="flex flex-row md:flex-col gap-2 md:gap-6 items-center flex-1 md:flex-none justify-center md:mt-4">
         {menuItems.map((item) => (
           <button
             key={item.id}
@@ -54,11 +54,11 @@ export default function EtherealSidebar({ activeView, setActiveView, isDark, onT
       </div>
 
       {/* Bottom Controls */}
-      <div className="mt-auto flex flex-col gap-4 items-center mb-12 relative">
+      <div className="flex flex-row md:flex-col gap-4 items-center md:mb-12 relative md:mt-auto">
         {/* Settings Button */}
         <button 
           onClick={onToggleSettings}
-          className="w-10 h-10 flex items-center justify-center rounded-full transition-all duration-200 text-on-surface-variant hover:text-primary hover:bg-on-surface/5 group relative"
+          className="hidden md:flex w-10 h-10 items-center justify-center rounded-full transition-all duration-200 text-on-surface-variant hover:text-primary hover:bg-on-surface/5 group relative"
           title="Settings"
         >
           <span className="material-symbols-outlined text-[20px] group-hover:rotate-90 transition-transform duration-300">settings</span>
@@ -71,7 +71,7 @@ export default function EtherealSidebar({ activeView, setActiveView, isDark, onT
         <div className="relative">
           <button
             onClick={() => setShowProfile(!showProfile)}
-            className="w-10 h-10 rounded-full border-2 p-0.5 border-outline-variant/50 shadow-[0_0_10px_rgba(142,213,255,0.1)] hover:border-primary/50 transition-all cursor-pointer overflow-hidden"
+            className="w-8 h-8 md:w-10 md:h-10 rounded-full border-2 p-0.5 border-outline-variant/50 shadow-[0_0_10px_rgba(142,213,255,0.1)] hover:border-primary/50 transition-all cursor-pointer overflow-hidden"
             title="Profile"
           >
             <img 
@@ -85,7 +85,7 @@ export default function EtherealSidebar({ activeView, setActiveView, isDark, onT
           {showProfile && (
             <>
               <div className="fixed inset-0 z-[65]" onClick={() => setShowProfile(false)} />
-              <div className="absolute left-14 bottom-0 w-56 bg-surface-container-lowest border border-outline-variant/30 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.3)] z-[70] overflow-hidden">
+              <div className="absolute bottom-[120%] right-0 md:left-14 md:bottom-0 w-56 bg-surface-container-lowest border border-outline-variant/30 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.3)] z-[70] overflow-hidden">
                 <div className="p-4 border-b border-outline-variant/20">
                   <div className="flex items-center gap-3">
                     <img 
@@ -108,11 +108,11 @@ export default function EtherealSidebar({ activeView, setActiveView, isDark, onT
                     New Chat Session
                   </button>
                   <button 
-                    onClick={() => setShowProfile(false)}
-                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-on-surface-variant hover:text-on-surface hover:bg-on-surface/5 transition-all text-left"
+                    onClick={() => { setShowProfile(false); onToggleSettings(); }}
+                    className="md:hidden w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-on-surface-variant hover:text-on-surface hover:bg-on-surface/5 transition-all text-left"
                   >
-                    <span className="material-symbols-outlined text-[18px]">account_circle</span>
-                    View Profile
+                    <span className="material-symbols-outlined text-[18px]">settings</span>
+                    Settings
                   </button>
                   <button 
                     onClick={() => setShowProfile(false)}

@@ -46,7 +46,7 @@ export default function DashboardView({ metrics }) {
       {/* Hero Section */}
       <div className="liquid-glass rounded-3xl p-8 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/8 via-transparent to-secondary/8 pointer-events-none" />
-        <div className="relative z-10 flex items-center justify-between">
+        <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-black tracking-tight text-on-surface">
               Command Center
@@ -58,7 +58,7 @@ export default function DashboardView({ metrics }) {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
               <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
-              <span className="text-xs font-bold text-emerald-400 tracking-wide uppercase">All Systems Operational</span>
+              <span className="text-xs font-bold text-emerald-400 tracking-wide uppercase text-center">All Systems Operational</span>
             </div>
           </div>
         </div>
@@ -114,10 +114,10 @@ export default function DashboardView({ metrics }) {
 
       {/* Agent Grid */}
       <div>
-        <div className="flex items-center gap-3 mb-4 px-1">
+        <div className="flex items-center gap-3 mb-4 px-1 flex-wrap">
           <span className="material-symbols-outlined text-primary text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>hub</span>
           <h2 className="text-lg font-black text-on-surface tracking-tight">Autonomous Agent Fleet</h2>
-          <span className="text-[10px] font-mono font-bold tracking-widest text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
+          <span className="text-[10px] font-mono font-bold tracking-widest text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20 whitespace-nowrap">
             {AGENTS.length} ACTIVE
           </span>
         </div>

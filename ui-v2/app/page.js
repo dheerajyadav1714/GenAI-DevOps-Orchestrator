@@ -301,7 +301,7 @@ export default function Home() {
       />
 
       {/* Main Container */}
-      <main className="flex-1 flex flex-col md:ml-20 h-screen relative overflow-hidden transition-all duration-300">
+      <main className="flex-1 flex flex-col md:ml-20 pb-20 md:pb-0 h-screen relative overflow-hidden transition-all duration-300">
         
         {/* Top App Bar */}
         <header className="flex justify-between items-center w-full px-8 h-16 backdrop-blur-md border-b sticky top-0 z-50 flex-shrink-0 transition-colors bg-surface-container-low/80 border-outline-variant/30 shadow-[0_0_40px_rgba(0,0,0,0.05)]">

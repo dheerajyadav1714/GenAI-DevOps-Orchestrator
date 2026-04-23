@@ -95,9 +95,9 @@ export default function AgentHubView({ onAgentClick }) {
         <h2 className="text-3xl md:text-4xl font-black tracking-tight text-on-surface mb-2">
           Autonomous Agent Hub
         </h2>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
           <span className="text-sm text-on-surface-variant font-medium">8 Specialized AI Agents • 32 Autonomous Capabilities</span>
-          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 w-max">
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
             <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">All Online</span>
           </div>
