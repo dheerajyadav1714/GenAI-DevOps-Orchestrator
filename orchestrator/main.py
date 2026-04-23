@@ -675,7 +675,7 @@ Available tools:
 - docs.generate: {{"repo": "owner/repo", "doc_type": "API"}}  (reads repo source code, generates comprehensive documentation, commits to branch, opens PR, and publishes to Confluence)
 - sre.postmortem: {{"service": "auth service outage", "repo": "owner/repo"}}  (auto-generates a blameless Incident Postmortem following Google SRE template using AlloyDB, Jira, and GitHub data, publishes to Confluence)
 - gcp.explore: {{"query": "list all Cloud Run services"}}  (queries LIVE GCP infrastructure — can list Cloud Run services, GKE clusters, Compute instances, Cloud SQL databases, or any GCP resource. Returns real production data.)
-- migration.design: {{"repo": "owner/repo", "project_name": "migration", "inventory_csv": "[[PREVIOUS_STEP_RESULT.content]]", "preferences": "cost vs HA"}} (Run Architect/SecOps/FinOps multi-agent debate based on user preferences and the inventory CSV. USE exactly '[[PREVIOUS_STEP_RESULT.content]]' for the inventory_csv parameter to chain read files. Outputs the finalized secure robust architecture and a Mermaid map to the user. MUST wait for user approval before provisioning.)
+- migration.design: {{"repo": "owner/repo", "project_name": "migration", "inventory_csv": "Optional CSV or requirements", "preferences": "cost vs HA"}} (Run Architect/SecOps/FinOps multi-agent debate. If reading a file first, use exactly '[[PREVIOUS_STEP_RESULT.content]]' for inventory_csv. If no file is mentioned, pass the raw user requirements as inventory_csv or 'None'. Outputs the finalized secure robust architecture and a Mermaid map. MUST wait for user approval before provisioning.)
 - migration.provision: {{"repo": "owner/repo", "project_name": "migration", "approved_architecture": "the confirmed design"}} (ONLY run this AFTER user approves the design. Autonomously writes the Terraform to a new Github branch and opens a PR.)
 
 Jira JQL examples:
@@ -701,8 +701,9 @@ RULES:
 7. For "review PR", always use the actual GitHub PR number, NOT the Jenkins build number.
 8. CRITICAL: When using github.create_pr or jira.create_issue, you MUST provide a comprehensive, multi-line string for the `body` or `description` parameter. Never let it be blank or "None". Elaborate professionally on the fix or the issue.
 9. CRITICAL: When user asks to "fix a bug" or "fix the bug in X", you MUST use code.generate_fix as the ONLY step. code.generate_fix already handles everything internally (reads file, generates fix, creates branch, creates PR, notifies Slack). Do NOT add separate jira.create_issue or github.create_pr steps — they will cause duplicates.
-10. CRITICAL: Do NOT use placeholder references like PREVIOUS_STEP_RESULT or step1.key in params. Use actual concrete values. For example, use the actual repo name "dheerajyadav1714/ci_cd", not a reference.
+10. CRITICAL: Do NOT use placeholder references like PREVIOUS_STEP_RESULT or step1.key in params EXCEPT when specifically instructed to do so by a tool (e.g., migration.design's inventory_csv). Otherwise, use actual concrete values like "dheerajyadav1714/ci_cd".
 11. ZERO-TO-CLOUD MASTER WORKFLOW: If the user asks you to handle Agile tickets, provision infrastructure, generate pipelines, and optimize costs all at once, you MUST ONLY output `agile.generate_ticket` and `migration.design`. DO NOT output the provision, pipeline, or finops steps. The Orchestrator will automatically chain those downstream AFTER the user approves the architecture design!
+12. For architecture/design requests, ALWAYS use `migration.design`. If no file is provided to read, pass the user's requirements directly into the `inventory_csv` parameter.
 {conversation_context}
 User request: "{user_request}"
 """
