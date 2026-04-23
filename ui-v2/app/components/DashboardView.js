@@ -51,7 +51,7 @@ export default function DashboardView({ metrics }) {
             <h1 className="text-2xl md:text-3xl font-black tracking-tight text-on-surface">
               Command Center
             </h1>
-            <p className="text-sm text-on-surface-variant mt-1 font-medium">
+            <p className="text-sm text-on-surface opacity-70 mt-1 font-medium">
               Autonomous Cloud Operating System — {metrics?.total_workflows || 0} workflows executed
             </p>
           </div>
@@ -229,7 +229,7 @@ function MetricCard({ icon, label, value, accent }) {
       </div>
       <div>
         <div className={`font-mono text-xl font-black ${accentClass} tracking-tighter`}>{value}</div>
-        <div className="text-[10px] text-on-surface-variant font-bold uppercase tracking-widest">{label}</div>
+        <div className="text-[10px] text-on-surface opacity-60 font-bold uppercase tracking-widest">{label}</div>
       </div>
     </div>
   );
