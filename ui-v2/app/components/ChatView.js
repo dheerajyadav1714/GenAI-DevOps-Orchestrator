@@ -274,29 +274,42 @@ export default function ChatView({ activeAgent, messages, isLoading, onSendMessa
           
           {/* Welcome State */}
           {!hasMessages && !isLoading && (
-            <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+            <div className="flex flex-col items-center justify-center py-10 gap-5 text-center w-full">
               <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center border border-primary/20 shadow-lg">
                 <span className="material-symbols-outlined text-primary text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>smart_toy</span>
               </div>
               <div>
                 <h3 className="text-lg font-bold text-on-surface mb-1">
-                  {activeAgent ? activeAgent.name : 'DevOps AI Assistant'}
+                  {activeAgent ? activeAgent.name : 'Autonomous Cloud OS'}
                 </h3>
-                <p className="text-sm text-on-surface-variant max-w-md leading-relaxed">
-                  {activeAgent 
-                    ? `Ready to execute ${activeAgent.name} protocols. What would you like me to do?`
-                    : 'I can help with Jira, GitHub, Jenkins, Slack, and more. Ask me anything about your DevOps infrastructure.'
-                  }
+                <p className="text-sm text-on-surface-variant max-w-lg leading-relaxed">
+                  I manage your entire SDLC — from Jira tickets to production deployments. Click any action below or type your request.
                 </p>
               </div>
-              <div className="flex flex-wrap gap-2 mt-4 justify-center">
-                {['Show me the incidents', 'Run pipeline status', 'Check deployment health'].map((suggestion) => (
+              
+              {/* Quick Actions Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2 w-full max-w-xl">
+                {[
+                  { icon: '🎯', label: 'Create User Story', prompt: 'Create a Jira user story for implementing a user login feature with JWT auth in SCRUM project' },
+                  { icon: '🏗️', label: 'Design Architecture', prompt: 'Design a cloud-native architecture for an e-commerce app on GCP' },
+                  { icon: '🔄', label: 'Generate Pipeline', prompt: 'Generate a CI/CD Jenkinsfile for dheerajyadav1714/ci_cd' },
+                  { icon: '⚡', label: 'Deploy to Cloud', prompt: 'Provision infrastructure for a Node.js app on GCP for dheerajyadav1714/ci_cd' },
+                  { icon: '🔍', label: 'Analyze Logs', prompt: 'Analyze Jenkins build logs for dheerajyadav1714/ci_cd and fix any failures' },
+                  { icon: '🧪', label: 'Generate Tests', prompt: 'Generate pytest tests for src/bug.py in dheerajyadav1714/ci_cd' },
+                  { icon: '📊', label: 'Sprint Health', prompt: 'Generate sprint health report for SCRUM project' },
+                  { icon: '💰', label: 'Optimize Costs', prompt: 'Optimize resource limits in kubernetes/deployment.yaml for dheerajyadav1714/ci_cd' },
+                  { icon: '🛡️', label: 'Security Scan', prompt: 'Scan dependencies in dheerajyadav1714/ci_cd for vulnerabilities' },
+                  { icon: '📝', label: 'Generate Docs', prompt: 'Generate API documentation for dheerajyadav1714/ci_cd' },
+                  { icon: '🌐', label: 'Explore GCP', prompt: 'Show me all Cloud Run services across my GCP projects' },
+                  { icon: '🌪️', label: 'Inject Chaos', prompt: 'Inject chaos into dheerajyadav1714/ci_cd — break src/bug.py and test self-healing' },
+                ].map((action) => (
                   <button
-                    key={suggestion}
-                    onClick={() => onSendMessage(suggestion)}
-                    className="px-4 py-2 rounded-full bg-surface-container border border-outline-variant/30 text-xs font-semibold text-on-surface-variant hover:text-primary hover:border-primary/30 transition-all"
+                    key={action.label}
+                    onClick={() => onSendMessage(action.prompt)}
+                    className="liquid-glass flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold text-on-surface-variant hover:text-primary hover:border-primary/30 transition-all text-left group"
                   >
-                    {suggestion}
+                    <span className="text-base">{action.icon}</span>
+                    <span className="group-hover:text-primary transition-colors">{action.label}</span>
                   </button>
                 ))}
               </div>

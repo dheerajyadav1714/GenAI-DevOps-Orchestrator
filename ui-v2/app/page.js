@@ -64,7 +64,13 @@ export default function Home() {
 
   const handleAgentClick = (agent) => {
     setActiveAgent(agent);
-    setIsMegaMenuOpen(true);
+    if (agent.initialPrompt) {
+      // Quick action from Agent Hub — switch to chat and send the prompt
+      setActiveView("CHAT");
+      setTimeout(() => sendMessage(agent.initialPrompt), 100);
+    } else {
+      setIsMegaMenuOpen(true);
+    }
   };
 
   const handleProtocolSelect = (protocol) => {

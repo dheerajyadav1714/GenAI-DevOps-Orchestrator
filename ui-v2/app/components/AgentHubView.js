@@ -1,72 +1,157 @@
 import React from 'react';
 
 const agents = [
-  { id: 'chaos', name: 'Chaos Injector', desc: 'Targeted systemic disruption protocol.', icon: 'warning', status: 'ACTIVE', color: 'text-error', pid: '0x9A4F', metric: 'ERR: 12' },
-  { id: 'infra', name: 'Infra Architect', desc: 'Automated topology provisioning.', icon: 'architecture', status: 'ACTIVE', color: 'text-primary', pid: '0x2B1A', metric: 'UPTIME: 99.99%' },
-  { id: 'finops', name: 'FinOps Optimizer', desc: 'Cloud resource cost reduction.', icon: 'payments', status: 'ACTIVE', color: 'text-secondary', pid: '0x7C3D', metric: 'SAVED: $14.2k' },
-  { id: 'pipeline', name: 'Pipeline Gen', desc: 'CI/CD workflow orchestrator.', icon: 'schema', status: 'ACTIVE', color: 'text-primary', pid: '0x4E5F', metric: '142 Managed' },
-  { id: 'hitl', name: 'Human-in-the-Loop', desc: 'Manual override & review gateway.', icon: 'record_voice_over', status: 'WAITING', color: 'text-tertiary', pid: '0x1A2B', metric: '3 Pending' },
-  { id: 'observability', name: 'GCP Observability', desc: 'Real-time log ingestion & analysis.', icon: 'cloud', status: 'ACTIVE', color: 'text-primary', pid: '0x8C9D', metric: '4.2M/sec' },
-  { id: 'healer', name: 'IaC Healer', desc: 'Infrastructure drift remediation.', icon: 'healing', status: 'ACTIVE', color: 'text-secondary', pid: '0x3F4E', metric: '892 Fixed' },
-  { id: 'forecaster', name: 'Predictive Forecaster', desc: 'Capacity planning & anomalies.', icon: 'trending_up', status: 'ACTIVE', color: 'text-secondary', pid: '0x5D6C', metric: '12% Drift' },
-  { id: 'audit', name: 'NLP Audit', desc: 'Semantic log parsing.', icon: 'psychology', status: 'ACTIVE', color: 'text-primary', pid: '0x0B1A', metric: '2.4k Queries' },
+  { 
+    id: 'agile', name: 'Agile PM', tagline: 'Plan • Track • Deliver', 
+    icon: 'assignment', accent: 'from-violet-500/20 to-violet-500/5', accentBorder: 'border-violet-500/20',
+    accentText: 'text-violet-400', accentBg: 'bg-violet-500/10',
+    capabilities: ['Jira CRUD', 'Sprint Health', 'User Stories', 'Velocity Tracking'],
+    actions: [
+      { label: 'Create User Story', prompt: 'Create a Jira user story for a user login feature with JWT authentication in the SCRUM project' },
+      { label: 'Sprint Report', prompt: 'Generate a sprint health report for the SCRUM project' },
+    ]
+  },
+  { 
+    id: 'architect', name: 'Platform Architect', tagline: 'Design • Debate • Build', 
+    icon: 'architecture', accent: 'from-blue-500/20 to-blue-500/5', accentBorder: 'border-blue-500/20',
+    accentText: 'text-blue-400', accentBg: 'bg-blue-500/10',
+    capabilities: ['Multi-Agent Debate', 'Cloud Migration', 'Mermaid Diagrams', 'Architecture Design'],
+    actions: [
+      { label: 'Design Architecture', prompt: 'Design a cloud-native microservices architecture for an e-commerce application on GCP with auto-scaling, CDN, and managed database' },
+      { label: 'Cloud Migration', prompt: 'Read the file infrastructure/inventory.csv from dheerajyadav1714/ci_cd and design a cloud migration plan to GCP' },
+    ]
+  },
+  { 
+    id: 'devops', name: 'DevOps Engineer', tagline: 'Automate • Deploy • Break', 
+    icon: 'build_circle', accent: 'from-orange-500/20 to-orange-500/5', accentBorder: 'border-orange-500/20',
+    accentText: 'text-orange-400', accentBg: 'bg-orange-500/10',
+    capabilities: ['Pipeline Gen', 'Jenkins CI/CD', 'Chaos Engineering', 'Self-Healing'],
+    actions: [
+      { label: 'Generate Pipeline', prompt: 'Generate a CI/CD Jenkinsfile pipeline for the repository dheerajyadav1714/ci_cd with build, test, Docker, and deploy stages' },
+      { label: 'Inject Chaos', prompt: 'Inject chaos into the repository dheerajyadav1714/ci_cd. Break the code in src/bug.py and trigger the Jenkins pipeline to test self-healing' },
+    ]
+  },
+  { 
+    id: 'sre', name: 'SRE', tagline: 'Monitor • Fix • Learn', 
+    icon: 'monitoring', accent: 'from-cyan-500/20 to-cyan-500/5', accentBorder: 'border-cyan-500/20',
+    accentText: 'text-cyan-400', accentBg: 'bg-cyan-500/10',
+    capabilities: ['Log Analysis', 'Auto Bug Fix', 'Postmortem', 'Risk Prediction'],
+    actions: [
+      { label: 'Analyze Logs', prompt: 'Analyze the latest Jenkins build logs for dheerajyadav1714/ci_cd and if there are failures, automatically fix the bugs and create a PR' },
+      { label: 'Generate Postmortem', prompt: 'Generate an incident postmortem for the auth service outage in dheerajyadav1714/ci_cd' },
+    ]
+  },
+  { 
+    id: 'finops', name: 'FinOps Director', tagline: 'Optimize • Rightsize • Save', 
+    icon: 'savings', accent: 'from-emerald-500/20 to-emerald-500/5', accentBorder: 'border-emerald-500/20',
+    accentText: 'text-emerald-400', accentBg: 'bg-emerald-500/10',
+    capabilities: ['Cost Optimization', 'Resource Right-Sizing', 'FinOps Reports'],
+    actions: [
+      { label: 'Optimize Costs', prompt: 'Analyze the kubernetes/deployment.yaml in dheerajyadav1714/ci_cd and optimize resource limits to reduce cloud costs. Open a PR with the changes.' },
+      { label: 'Right-Size Resources', prompt: 'Review all infrastructure files in dheerajyadav1714/ci_cd and recommend cost optimizations' },
+    ]
+  },
+  { 
+    id: 'security', name: 'Security Engineer', tagline: 'Scan • Detect • Remediate', 
+    icon: 'shield', accent: 'from-red-500/20 to-red-500/5', accentBorder: 'border-red-500/20',
+    accentText: 'text-red-400', accentBg: 'bg-red-500/10',
+    capabilities: ['Vulnerability Scanner', 'Drift Detection', 'Compliance', 'Auto-Patching'],
+    actions: [
+      { label: 'Security Scan', prompt: 'Scan the dependencies in dheerajyadav1714/ci_cd for known vulnerabilities and automatically patch any vulnerable versions' },
+      { label: 'Predict Risk', prompt: 'Run a deployment risk prediction analysis for the auth service in dheerajyadav1714/ci_cd' },
+    ]
+  },
+  { 
+    id: 'qa', name: 'QA Engineer', tagline: 'Test • Review • Validate', 
+    icon: 'bug_report', accent: 'from-amber-500/20 to-amber-500/5', accentBorder: 'border-amber-500/20',
+    accentText: 'text-amber-400', accentBg: 'bg-amber-500/10',
+    capabilities: ['Test Generator', 'Code Review', 'Coverage Analysis'],
+    actions: [
+      { label: 'Generate Tests', prompt: 'Generate comprehensive pytest unit tests for src/bug.py in dheerajyadav1714/ci_cd and open a PR with the test file' },
+      { label: 'Generate Docs', prompt: 'Generate comprehensive API documentation for dheerajyadav1714/ci_cd and publish to Confluence' },
+    ]
+  },
+  { 
+    id: 'cloud', name: 'Cloud Engineer', tagline: 'Explore • Provision • Remediate', 
+    icon: 'cloud', accent: 'from-teal-500/20 to-teal-500/5', accentBorder: 'border-teal-500/20',
+    accentText: 'text-teal-400', accentBg: 'bg-teal-500/10',
+    capabilities: ['GCP Explorer', 'Terraform Provisioning', 'Auto-Remediation', 'Zero-Touch Infra'],
+    actions: [
+      { label: 'Explore GCP', prompt: 'Show me all Cloud Run services across my GCP projects with their URLs and status' },
+      { label: 'Provision Infra', prompt: 'Provision a complete Node.js application infrastructure on GCP with Cloud Run, Cloud SQL, and Redis for dheerajyadav1714/ci_cd' },
+    ]
+  },
 ];
 
 export default function AgentHubView({ onAgentClick }) {
+  const handleAction = (agent, action) => {
+    onAgentClick({ ...agent, name: agent.name, icon: agent.icon, initialPrompt: action.prompt });
+  };
+
   return (
-    <div className="flex-1 p-6 md:p-14 overflow-y-auto no-scrollbar h-full">
+    <div className="flex-1 p-6 md:p-10 overflow-y-auto no-scrollbar h-full">
       {/* Page Header */}
-      <div className="mb-12 relative">
-        <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight text-on-surface mb-3 font-headline">
-          Master Agent Hub
+      <div className="mb-8">
+        <h2 className="text-3xl md:text-4xl font-black tracking-tight text-on-surface mb-2">
+          Autonomous Agent Hub
         </h2>
-        <div className="inline-flex items-center gap-3 bg-surface-container-low px-4 py-2 rounded-lg border border-outline-variant/30 backdrop-blur-md">
-          <span className="font-mono text-xs text-secondary tracking-wider">SYSTEM_STATUS: OPTIMAL</span>
-          <span className="w-1 h-1 rounded-full bg-outline-variant"></span>
-          <span className="font-mono text-xs text-primary tracking-wider">ACTIVE_AGENTS: 9</span>
+        <div className="flex items-center gap-4">
+          <span className="text-sm text-on-surface-variant font-medium">8 Specialized AI Agents • 32 Autonomous Capabilities</span>
+          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
+            <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">All Online</span>
+          </div>
         </div>
       </div>
 
       {/* Agent Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {agents.map((agent) => (
           <div 
             key={agent.id}
-            onClick={() => onAgentClick(agent)}
-            className="group relative flex flex-col h-[280px] p-6 rounded-2xl refractive-glass hover:scale-[1.02] transition-all duration-300 cursor-pointer overflow-hidden"
+            className={`liquid-glass rounded-2xl p-6 relative overflow-hidden group transition-all duration-300 hover:scale-[1.01] border ${agent.accentBorder}`}
           >
-            {/* Ambient Background Glow */}
-            <div className={`absolute top-0 right-0 w-32 h-32 opacity-10 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none bg-primary`} />
+            {/* Gradient Background */}
+            <div className={`absolute inset-0 bg-gradient-to-br ${agent.accent} pointer-events-none opacity-50`} />
             
-            <div className="flex justify-between items-start mb-6 z-10">
-              <div className="w-12 h-12 bg-surface-container-low rounded-xl flex items-center justify-center border border-outline-variant/30 group-hover:border-primary/50 transition-colors">
-                <span className={`material-symbols-outlined ${agent.color} text-[28px]`}>{agent.icon}</span>
+            <div className="relative z-10">
+              {/* Header */}
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-xl ${agent.accentBg} flex items-center justify-center border ${agent.accentBorder}`}>
+                    <span className={`material-symbols-outlined ${agent.accentText} text-[24px]`} style={{ fontVariationSettings: "'FILL' 1" }}>{agent.icon}</span>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-on-surface">{agent.name}</h3>
+                    <span className="text-xs text-on-surface-variant font-medium italic">{agent.tagline}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
+                  <span className="text-[9px] font-mono text-emerald-400 font-bold uppercase tracking-widest">Online</span>
+                </div>
               </div>
-              
-              <div className="flex items-center gap-2 bg-surface-container-low px-3 py-1.5 rounded-full border border-outline-variant/30">
-                <span className={`w-2 h-2 rounded-full ${agent.status === 'ACTIVE' ? 'bg-secondary animate-pulse shadow-[0_0_8px_theme(colors.secondary)]' : 'bg-outline-variant'}`} />
-                <span className={`font-mono text-[10px] font-bold tracking-widest ${agent.status === 'ACTIVE' ? 'text-secondary' : 'text-outline-variant'}`}>
-                  {agent.status}
-                </span>
-              </div>
-            </div>
 
-            <div className="z-10 flex-1">
-              <h3 className="text-xl font-bold text-on-surface mb-1 group-hover:text-primary transition-colors">{agent.name}</h3>
-              <p className="text-sm text-on-surface-variant font-medium leading-relaxed">{agent.desc}</p>
-            </div>
-
-            <div className="mt-auto z-10 bg-surface-container-low/50 rounded-xl p-4 border border-outline-variant/20 flex justify-between items-center backdrop-blur-sm">
-              <div className="flex flex-col">
-                <span className="text-[10px] text-on-surface-variant uppercase tracking-widest mb-1 font-semibold">Process ID</span>
-                <span className="font-mono text-sm text-on-surface font-bold">{agent.pid}</span>
+              {/* Capability Tags */}
+              <div className="flex flex-wrap gap-1.5 mb-4">
+                {agent.capabilities.map((cap, j) => (
+                  <span key={j} className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-surface-container-high/50 text-on-surface-variant border border-outline-variant/20 backdrop-blur-sm">
+                    {cap}
+                  </span>
+                ))}
               </div>
-              <div className="w-px h-8 bg-outline-variant/30" />
-              <div className="flex flex-col text-right">
-                <span className="text-[10px] text-on-surface-variant uppercase tracking-widest mb-1 font-semibold">Metric</span>
-                <span className={`font-mono text-sm font-bold ${agent.status === 'ACTIVE' ? 'text-primary' : 'text-on-surface-variant'}`}>
-                  {agent.metric}
-                </span>
+
+              {/* Quick Actions */}
+              <div className="flex gap-2">
+                {agent.actions.map((action, j) => (
+                  <button 
+                    key={j}
+                    onClick={() => handleAction(agent, action)}
+                    className={`flex-1 text-xs font-bold px-3 py-2.5 rounded-xl transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] ${agent.accentBg} ${agent.accentText} border ${agent.accentBorder} hover:shadow-lg`}
+                  >
+                    {action.label}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
