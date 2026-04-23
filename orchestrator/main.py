@@ -707,7 +707,11 @@ RULES:
 {conversation_context}
 User request: "{user_request}"
 """
-            response = await asyncio.to_thread(active_model.generate_content, plan_prompt)
+            try:
+                response = await asyncio.to_thread(active_model.generate_content, plan_prompt)
+            except Exception as e:
+                logger.warning(f"active_model failed ({e}), falling back to gemini_flash for intent parsing")
+                response = await asyncio.to_thread(gemini_flash.generate_content, plan_prompt)
             raw = response.text.strip()
             logger.info(f"Gemini plan: {raw}")
 
@@ -1756,6 +1760,15 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                         try: requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"🚀 *Interactive Cloud Migration Initiated for {mig_proj}*\n📥 Ingested live inventory CSV from Repo.\n🎯 User Preferences: {prefs}\n\n🤖 Orchestrating Multi-Agent Debate for target GCP Architecture..."}, timeout=15)
                         except: pass
 
+                        async def generate_with_fallback(prompt):
+                            try:
+                                resp = await asyncio.to_thread(gemini_pro.generate_content, prompt)
+                                return resp.text.strip()
+                            except Exception as e:
+                                logger.warning(f"gemini_pro rate limit or error ({e}), falling back to gemini_flash")
+                                resp = await asyncio.to_thread(gemini_flash.generate_content, prompt)
+                                return resp.text.strip()
+
                         # Agent 1: Architect (Gemini Pro for deep reasoning)
                         arch_prompt = (
                             f"You are a Principal GCP Cloud Architect with 15+ years of enterprise migration experience.\n"
@@ -1774,8 +1787,7 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                             "10. **DNS & CDN**: Cloud DNS zones, Cloud CDN configuration\n\n"
                             "Output a detailed architectural description with specific GCP service names, configurations, and sizing."
                         )
-                        arch_resp = await asyncio.to_thread(gemini_pro.generate_content, arch_prompt)
-                        arch_draft = arch_resp.text.strip()
+                        arch_draft = await generate_with_fallback(arch_prompt)
                         try: requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"🏗️ *Principal Architect Draft:*\n{arch_draft[:1000]}..."}, timeout=15)
                         except: pass
 
@@ -1794,8 +1806,7 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                             "7. **Logging & Audit**: Cloud Audit Logs enabled, log sinks to BigQuery for SIEM, Data Access logs\n\n"
                             "Output the COMPLETE updated architecture with security controls integrated (not just a list of changes)."
                         )
-                        sec_resp = await asyncio.to_thread(gemini_pro.generate_content, sec_prompt)
-                        sec_draft = sec_resp.text.strip()
+                        sec_draft = await generate_with_fallback(sec_prompt)
                         try: requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"🔒 *SecOps Reviewer Critique:*\n{sec_draft[:1000]}..."}, timeout=15)
                         except: pass
 
@@ -1816,8 +1827,7 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                             "Include estimated monthly cost breakdown by service for both Production and Non-Production.\n"
                             "Output the FINAL complete architectural design with all optimizations applied."
                         )
-                        fin_resp = await asyncio.to_thread(gemini_pro.generate_content, fin_prompt)
-                        final_arch = fin_resp.text.strip()
+                        final_arch = await generate_with_fallback(fin_prompt)
                         try: requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"💰 *FinOps Optimization:*\n{final_arch[:1000]}..."}, timeout=15)
                         except: pass
 
@@ -1850,8 +1860,7 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                             "11. **Syntax Rules**: Start with 'graph TD'. Use double-quotes for ALL labels. NEVER use curly braces {} for grouping connections. Write each connection on its own line.\n\n"
                             "Output ONLY raw mermaid code. Make it comprehensive with 25-40 nodes minimum."
                         )
-                        mm_resp = await asyncio.to_thread(gemini_pro.generate_content, mermaid_prompt)
-                        mermaid_code = mm_resp.text.strip()
+                        mermaid_code = await generate_with_fallback(mermaid_prompt)
                         if mermaid_code.startswith("```"):
                             mermaid_code = re.sub(r'^```\w*\n?', '', mermaid_code)
                             mermaid_code = re.sub(r'\n?```$', '', mermaid_code)
