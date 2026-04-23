@@ -91,8 +91,11 @@ export default function AgentHubView({ onAgentClick }) {
   return (
     <div className="p-6 md:p-10 pb-32">
       {/* Page Header */}
-      <div className="mb-8">
-        <h2 className="text-3xl md:text-4xl font-black tracking-tight text-on-surface mb-2">
+      <div className="mb-8 mt-4 relative">
+        <div className="absolute -top-6 left-0 px-2.5 py-1 rounded-md bg-surface-container-highest border border-outline-variant/30 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest shadow-sm">
+          Agent Hub
+        </div>
+        <h2 className="text-3xl md:text-4xl font-black tracking-tight text-on-surface mb-2 mt-4">
           Autonomous Agent Hub
         </h2>
         <div className="flex flex-col sm:flex-row sm:items-center gap-4">
@@ -105,7 +108,7 @@ export default function AgentHubView({ onAgentClick }) {
       </div>
 
       {/* Agent Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
         {agents.map((agent) => (
           <div 
             key={agent.id}

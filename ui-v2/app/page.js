@@ -309,7 +309,7 @@ export default function Home() {
       />
 
       {/* Main Container */}
-      <main className="flex-1 flex flex-col md:ml-20 min-h-screen relative transition-all duration-500">
+      <main className={`flex-1 flex flex-col md:ml-20 relative transition-all duration-500 ${activeView === 'CHAT' ? 'h-screen overflow-hidden' : 'min-h-screen pb-24 md:pb-0'}`}>
         
         {/* Top App Bar — Ultra Premium Glass */}
         <header className="flex justify-between items-center w-full px-6 md:px-12 h-28 md:h-36 pt-12 md:pt-8 backdrop-blur-2xl border-b sticky top-0 z-50 flex-shrink-0 transition-all bg-surface-container-low/80 border-outline-variant/20 shadow-[0_10px_40px_rgba(0,0,0,0.08)]">
@@ -351,8 +351,8 @@ export default function Home() {
         </header>
 
         {/* Dynamic View Content */}
-        <div className="flex-1 flex relative z-10 transition-all duration-300 overflow-hidden">
-          <div className="flex-1 relative h-full flex overflow-hidden">
+        <div className={`flex-1 flex relative z-10 transition-all duration-300 ${activeView === 'CHAT' ? 'overflow-hidden' : ''}`}>
+          <div className={`flex-1 relative flex ${activeView === 'CHAT' ? 'h-full overflow-hidden' : 'flex-col'}`}>
             {activeView === "DASHBOARD" && <DashboardView metrics={metrics} />}
             {activeView === "HUB" && <AgentHubView onAgentClick={handleAgentClick} />}
             {activeView === "CHAT" && (
