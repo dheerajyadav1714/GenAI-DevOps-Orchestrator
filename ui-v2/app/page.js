@@ -304,7 +304,7 @@ export default function Home() {
       <main className="flex-1 flex flex-col md:ml-20 pb-20 md:pb-0 h-screen relative overflow-hidden transition-all duration-300">
         
         {/* Top App Bar */}
-        <header className="flex justify-between items-center w-full px-8 h-16 backdrop-blur-md border-b sticky top-0 z-50 flex-shrink-0 transition-colors bg-surface-container-low/80 border-outline-variant/30 shadow-[0_0_40px_rgba(0,0,0,0.05)]">
+        <header className="flex justify-between items-center w-full px-4 md:px-8 h-16 md:h-20 mt-1 md:mt-0 backdrop-blur-md border-b sticky top-0 z-50 flex-shrink-0 transition-colors bg-surface-container-low/80 border-outline-variant/30 shadow-[0_0_40px_rgba(0,0,0,0.05)]">
           <div className="flex items-center gap-4">
              <div className="flex flex-col">
                 <h1 className="font-['Inter'] font-black text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary-container tracking-tighter text-xl">

@@ -48,7 +48,7 @@ export default function DashboardView({ metrics }) {
         <div className="absolute inset-0 bg-gradient-to-br from-primary/8 via-transparent to-secondary/8 pointer-events-none" />
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-black tracking-tight text-on-surface">
+            <h1 className="text-2xl md:text-3xl font-black tracking-tight text-on-surface">
               Command Center
             </h1>
             <p className="text-sm text-on-surface-variant mt-1 font-medium">
@@ -205,7 +205,7 @@ function DoraCard({ title, value, unit, subtitle, grade, icon, gc }) {
       <div className="relative z-10">
         <div className="flex items-center justify-between mb-3">
           <span className="material-symbols-outlined text-on-surface-variant text-lg opacity-60" style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
-          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${colors.text} bg-current/10 border ${colors.border}`}>
+          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${colors.text} bg-current opacity-20 border ${colors.border}`}>
             {grade}
           </span>
         </div>
@@ -214,7 +214,7 @@ function DoraCard({ title, value, unit, subtitle, grade, icon, gc }) {
           <span className="text-sm font-bold text-on-surface-variant">{unit}</span>
         </div>
         <div className="text-[11px] text-on-surface-variant font-medium mt-1">{title}</div>
-        <div className="text-[10px] text-on-surface-variant/60 font-mono mt-0.5">{subtitle}</div>
+        <div className="text-[10px] text-on-surface-variant opacity-70 font-mono mt-0.5">{subtitle}</div>
       </div>
     </div>
   );
