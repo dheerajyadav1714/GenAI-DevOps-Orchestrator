@@ -56,3 +56,6 @@ orchestrator/logs.txt
 orchestrator/orchestrator.db
 orchestrator/test_regex.py
 scratch/
+implementation_plan.md
+task.md
+walkthrough.md
