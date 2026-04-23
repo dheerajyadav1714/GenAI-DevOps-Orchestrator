@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import DashboardView from "./components/DashboardView";
 import AgentHubView from "./components/AgentHubView";
 import ChatView from "./components/ChatView";
+import ActivityFeedView from "./components/ActivityFeedView";
 import EtherealSidebar from "./components/EtherealSidebar";
 import MegaMenu from "./components/MegaMenu";
 import MetricsPanel from "./components/MetricsPanel";
@@ -20,6 +21,8 @@ export default function Home() {
   const [isDark, setIsDark] = useState(true);
   const [activeAgent, setActiveAgent] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [workflowActivities, setWorkflowActivities] = useState([]);
+  const [liveSteps, setLiveSteps] = useState([]);
 
   useEffect(() => {
     if (isDark) {
@@ -104,6 +107,8 @@ export default function Home() {
     if (!userMsg.trim() || isLoading) return;
     setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
     setIsLoading(true);
+    setLiveSteps([]);
+    const workflowStartTime = Date.now();
 
     try {
       await fetch(`${API_BASE}/messages`, {
@@ -111,6 +116,10 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ role: "user", content: userMsg, user_id: "ui_user" }),
       });
+
+      // Track: Orchestrator received request
+      setLiveSteps([{ tool: 'reply', action: 'Planning', timestamp: Date.now(), params: {} }]);
+
       const runRes = await fetch(`${API_BASE}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -119,15 +128,33 @@ export default function Home() {
       const { workflow_id } = await runRes.json();
 
       let completed = false;
+      let previousStepCount = 0;
+
       while (!completed) {
         await new Promise((r) => setTimeout(r, 2000));
         try {
           const statusRes = await fetch(`${API_BASE}/workflow/${workflow_id}`);
           const statusData = await statusRes.json();
+
+          // Parse the plan to show incremental live steps
+          let plan = [];
+          try { plan = typeof statusData.plan === "string" ? JSON.parse(statusData.plan) : statusData.plan || []; } catch { plan = []; }
+
+          // Update live steps if new steps appeared
+          if (plan.length > previousStepCount) {
+            const newLiveSteps = plan.map((s) => ({
+              tool: s.tool,
+              action: s.action,
+              timestamp: Date.now(),
+              params: s.params || {},
+              result: s.result || null,
+            }));
+            setLiveSteps(newLiveSteps);
+            previousStepCount = plan.length;
+          }
+
           if (statusData.status === "completed" || statusData.status === "failed") {
             completed = true;
-            let plan = [];
-            try { plan = typeof statusData.plan === "string" ? JSON.parse(statusData.plan) : statusData.plan || []; } catch { plan = []; }
             const replyStep = plan.find((s) => s.tool === "reply" && s.action === "send");
             const replyText = replyStep?.params?.text || "Workflow completed.";
             
@@ -178,12 +205,32 @@ export default function Home() {
               actionCard,
               actionCards
             }]);
+
+            // Record completed workflow in activity feed
+            const activitySteps = plan.filter(s => s.tool !== 'reply').map(s => ({
+              tool: s.tool,
+              action: s.action,
+              timestamp: Date.now(),
+              params: s.params || {},
+              result: s.result || null,
+            }));
+            setWorkflowActivities(prev => [{
+              id: workflow_id,
+              request: userMsg,
+              status: statusData.status,
+              startTime: workflowStartTime,
+              endTime: Date.now(),
+              steps: activitySteps,
+            }, ...prev]);
+
+            setLiveSteps([]);
             fetchMetrics();
           }
         } catch (pollErr) { /* retry */ }
       }
     } catch (err) {
       setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${err.message}` }]);
+      setLiveSteps([]);
     } finally {
       setIsLoading(false);
     }
@@ -360,6 +407,13 @@ export default function Home() {
           <div className={`flex-1 relative flex ${activeView === 'CHAT' ? 'h-full overflow-hidden' : 'flex-col'}`}>
             {activeView === "DASHBOARD" && <DashboardView metrics={metrics} />}
             {activeView === "HUB" && <AgentHubView onAgentClick={handleAgentClick} />}
+            {activeView === "ACTIVITY" && (
+              <ActivityFeedView
+                activities={workflowActivities}
+                isLoading={isLoading}
+                liveSteps={liveSteps}
+              />
+            )}
             {activeView === "CHAT" && (
               <ChatView 
                 activeAgent={activeAgent} 

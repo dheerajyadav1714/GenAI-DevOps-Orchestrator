@@ -7,6 +7,7 @@ export default function EtherealSidebar({ activeView, setActiveView, isDark, onT
   const menuItems = [
     { id: 'DASHBOARD', icon: 'monitoring', label: 'Dashboard' },
     { id: 'HUB', icon: 'smart_toy', label: 'Agent Hub' },
+    { id: 'ACTIVITY', icon: 'timeline', label: 'Activity' },
     { id: 'CHAT', icon: 'forum', label: 'Focused Chat' },
   ];
 
