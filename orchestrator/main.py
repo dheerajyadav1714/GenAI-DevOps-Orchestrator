@@ -133,7 +133,20 @@ engine = create_async_engine(DATABASE_URL, echo=False, poolclass=NullPool)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 vertexai.init(project="genai-hackathon-491712", location="us-central1")
-gemini_model = GenerativeModel("gemini-2.5-flash")
+gemini_flash = GenerativeModel("gemini-2.5-flash")
+gemini_pro = GenerativeModel("gemini-2.5-pro")
+gemini_model = gemini_flash  # Default for backward compatibility
+
+def select_model(user_request):
+    """Route complex tasks to Gemini Pro for deeper reasoning, Flash for speed"""
+    complex_keywords = ['architect', 'design', 'migration', 'security scan',
+                        'postmortem', 'debate', 'optimize cost', 'provision',
+                        'infrastructure', 'vulnerability', 'compliance', 'risk assessment']
+    if any(kw in user_request.lower() for kw in complex_keywords):
+        logger.info(f"Model routing: Using Gemini Pro for complex request")
+        return gemini_pro
+    logger.info(f"Model routing: Using Gemini Flash for standard request")
+    return gemini_flash
 
 MCP_SERVERS = {
     "jenkins": "https://jenkins-mcp-751208519049.us-central1.run.app",
@@ -599,6 +612,28 @@ async def execute_workflow_async(workflow_id, user_request, override_steps=None)
                     await session.commit()
                 return
 
+            # ===== SELECT MODEL BASED ON REQUEST COMPLEXITY =====
+            active_model = select_model(user_request)
+
+            # ===== MULTI-TURN MEMORY: Fetch recent conversation context =====
+            conversation_context = ""
+            try:
+                async with AsyncSessionLocal() as ctx_session:
+                    ctx_result = await ctx_session.execute(sql_text(
+                        "SELECT role, content FROM chat_messages WHERE user_id='ui_user' "
+                        "ORDER BY created_at DESC LIMIT 10"
+                    ))
+                    ctx_rows = ctx_result.fetchall()
+                    if ctx_rows:
+                        recent_msgs = [{"role": r[0], "content": r[1][:400]} for r in reversed(ctx_rows)]
+                        conversation_context = "\nRecent conversation history (use this for context on follow-up requests):\n"
+                        for msg in recent_msgs[-6:]:
+                            conversation_context += f"- {msg['role'].upper()}: {msg['content']}\n"
+                        conversation_context += "\nUse this context to understand references like 'that ticket', 'the PR', 'deploy it', etc.\n"
+                        logger.info(f"Loaded {len(recent_msgs)} messages for conversation context")
+            except Exception as ctx_err:
+                logger.warning(f"Failed to load conversation context: {ctx_err}")
+
             # ===== PASS 1: PLAN =====
             plan_prompt = f"""You are a DevOps assistant. Output ONLY a JSON array of tool steps. No other text.
 
@@ -668,10 +703,10 @@ RULES:
 9. CRITICAL: When user asks to "fix a bug" or "fix the bug in X", you MUST use code.generate_fix as the ONLY step. code.generate_fix already handles everything internally (reads file, generates fix, creates branch, creates PR, notifies Slack). Do NOT add separate jira.create_issue or github.create_pr steps — they will cause duplicates.
 10. CRITICAL: Do NOT use placeholder references like PREVIOUS_STEP_RESULT or step1.key in params. Use actual concrete values. For example, use the actual repo name "dheerajyadav1714/ci_cd", not a reference.
 11. ZERO-TO-CLOUD MASTER WORKFLOW: If the user asks you to handle Agile tickets, provision infrastructure, generate pipelines, and optimize costs all at once, you MUST ONLY output `agile.generate_ticket` and `migration.design`. DO NOT output the provision, pipeline, or finops steps. The Orchestrator will automatically chain those downstream AFTER the user approves the architecture design!
-
+{conversation_context}
 User request: "{user_request}"
 """
-            response = await asyncio.to_thread(gemini_model.generate_content, plan_prompt)
+            response = await asyncio.to_thread(active_model.generate_content, plan_prompt)
             raw = response.text.strip()
             logger.info(f"Gemini plan: {raw}")
 
@@ -2772,7 +2807,7 @@ Generate a helpful, well-formatted reply using markdown. Rules:
 - IMPORTANT: Do NOT re-generate or include any mermaid diagram code — it will be appended automatically.
 """
             try:
-                reply_response = await asyncio.to_thread(gemini_model.generate_content, reply_prompt)
+                reply_response = await asyncio.to_thread(active_model.generate_content, reply_prompt)
                 reply_text = reply_response.text.strip()
             except Exception as e:
                 logger.error(f"Reply generation failed: {e}")
@@ -2782,6 +2817,66 @@ Generate a helpful, well-formatted reply using markdown. Rules:
             if has_migration_design and mermaid_to_append:
                 reply_text += f"\n\n## Visual Architecture Diagram\n\n```mermaid\n{mermaid_to_append}\n```"
                 reply_text += f"\n\n> 💡 **Pro Tip:** Want to use official GCP icons? Click 'Copy' on this diagram, open [Draw.io](https://app.diagrams.net/), go to **Arrange > Insert > Advanced > Mermaid**, and paste the code!"
+
+            # ===== SMART SUGGESTIONS: Proactive next-action hints =====
+            suggestions = []
+            for s_step in steps:
+                s_tool = s_step.get("tool", "")
+                s_action = s_step.get("action", "")
+                s_result = s_step.get("result", {}) or {}
+                
+                if s_tool == "jira" and s_action == "create_issue":
+                    s_key = s_result.get("key", "")
+                    if s_key:
+                        suggestions.append(f"Generate code fix for {s_key}")
+                        suggestions.append(f"Assign {s_key} to current sprint")
+                elif s_tool == "code" and s_action == "generate_fix":
+                    s_pr = s_result.get("pr_number", "")
+                    if s_pr:
+                        suggestions.append(f"Review PR #{s_pr}")
+                    suggestions.append("Trigger Jenkins pipeline to test the fix")
+                elif s_tool == "pipeline" and s_action == "generate":
+                    suggestions.append("Trigger the generated pipeline")
+                    suggestions.append("Run security scan on the repository")
+                elif s_tool == "migration" and s_action == "design":
+                    suggestions.append("Approve and provision this architecture")
+                    suggestions.append("Optimize costs for this design")
+                elif s_tool == "jenkins" and s_action == "trigger":
+                    if s_result.get("status") == "FAILURE" or s_result.get("result") == "FAILURE":
+                        suggestions.append("Analyze and auto-fix the failure")
+                    else:
+                        suggestions.append("Generate release notes for this build")
+                elif s_tool == "security" and s_action == "scan_dependencies":
+                    suggestions.append("Create Jira tickets for found vulnerabilities")
+                    suggestions.append("Generate a postmortem report")
+                elif s_tool == "testing" and s_action == "generate":
+                    suggestions.append("Run the test suite via Jenkins")
+                elif s_tool == "sre" and s_action == "postmortem":
+                    suggestions.append("Create follow-up Jira tickets for action items")
+                elif s_tool == "agile" and s_action == "generate_ticket":
+                    s_key = s_result.get("key", "")
+                    if s_key:
+                        suggestions.append(f"Generate code for {s_key}")
+                    suggestions.append("Check sprint health")
+                elif s_tool == "agile" and s_action == "sprint_health":
+                    suggestions.append("List all blocked tickets")
+                    suggestions.append("Create a standup summary")
+                elif s_tool == "github" and s_action == "review_pr":
+                    suggestions.append("Merge the PR if approved")
+                    suggestions.append("Run security scan on the repository")
+
+            # Deduplicate and limit
+            seen = set()
+            unique_suggestions = []
+            for sg in suggestions:
+                if sg not in seen:
+                    seen.add(sg)
+                    unique_suggestions.append(sg)
+            
+            if unique_suggestions:
+                reply_text += "\n\n---\n**💡 Suggested Next Actions:**\n"
+                for sg in unique_suggestions[:4]:
+                    reply_text += f"- {sg}\n"
 
             # Build final plan with the reply
             final_steps = steps + [{"tool": "reply", "action": "send", "params": {"text": reply_text}}]
