@@ -297,7 +297,7 @@ export default function Home() {
   };
 
   return (
-    <div className={`flex h-screen transition-colors duration-500 bg-background text-on-surface`}>
+    <div className={`flex min-h-screen transition-colors duration-500 ${isDark ? 'dark bg-background text-on-surface' : 'bg-background text-on-surface'}`}>
       
       {/* Dynamic Sidebar */}
       <EtherealSidebar 
@@ -309,10 +309,10 @@ export default function Home() {
       />
 
       {/* Main Container */}
-      <main className="flex-1 flex flex-col md:ml-20 pb-24 md:pb-0 h-screen relative overflow-hidden transition-all duration-300">
+      <main className="flex-1 flex flex-col md:ml-20 min-h-screen relative transition-all duration-500">
         
-        {/* Top App Bar */}
-        <header className="flex justify-between items-center w-full px-6 md:px-10 h-20 md:h-24 pt-4 md:pt-0 backdrop-blur-xl border-b sticky top-0 z-50 flex-shrink-0 transition-colors bg-surface-container-low/80 border-outline-variant/30 shadow-[0_4px_30px_rgba(0,0,0,0.05)]">
+        {/* Top App Bar — Ultra Premium Glass */}
+        <header className="flex justify-between items-center w-full px-6 md:px-12 h-24 md:h-32 pt-10 md:pt-6 backdrop-blur-2xl border-b sticky top-0 z-50 flex-shrink-0 transition-all bg-surface-container-low/80 border-outline-variant/20 shadow-[0_10px_40px_rgba(0,0,0,0.08)]">
           <div className="flex items-center gap-4">
              <div className="flex flex-col">
                 <h1 className="font-['Inter'] font-black text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary-container tracking-tighter text-xl">

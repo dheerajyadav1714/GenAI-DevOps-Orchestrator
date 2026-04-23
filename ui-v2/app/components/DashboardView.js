@@ -41,7 +41,7 @@ export default function DashboardView({ metrics }) {
   const gc = (grade) => GRADE_COLORS[grade] || GRADE_COLORS['N/A'];
 
   return (
-    <div className="flex-1 flex flex-col p-6 gap-5 overflow-y-auto h-full no-scrollbar">
+    <div className="flex flex-col p-6 gap-8 pb-32">
       
       {/* Hero Section */}
       <div className="liquid-glass rounded-3xl p-8 relative overflow-hidden">
@@ -51,7 +51,7 @@ export default function DashboardView({ metrics }) {
             <h1 className="text-2xl md:text-3xl font-black tracking-tight text-on-surface">
               Command Center
             </h1>
-            <p className="text-sm text-on-surface opacity-70 mt-1 font-medium">
+            <p className="text-sm text-on-surface opacity-80 mt-1 font-medium">
               Autonomous Cloud Operating System — {metrics?.total_workflows || 0} workflows executed
             </p>
           </div>
@@ -214,7 +214,7 @@ function DoraCard({ title, value, unit, subtitle, grade, icon, gc }) {
           <span className="text-sm font-bold text-on-surface-variant">{unit}</span>
         </div>
         <div className="text-[11px] text-on-surface-variant font-medium mt-1">{title}</div>
-        <div className="text-[10px] text-on-surface-variant opacity-70 font-mono mt-0.5">{subtitle}</div>
+        <div className="text-[10px] text-on-surface opacity-70 font-mono mt-0.5">{subtitle}</div>
       </div>
     </div>
   );

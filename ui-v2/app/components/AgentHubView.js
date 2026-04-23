@@ -89,7 +89,7 @@ export default function AgentHubView({ onAgentClick }) {
   };
 
   return (
-    <div className="flex-1 p-6 md:p-10 overflow-y-auto no-scrollbar h-full">
+    <div className="p-6 md:p-10 pb-32">
       {/* Page Header */}
       <div className="mb-8">
         <h2 className="text-3xl md:text-4xl font-black tracking-tight text-on-surface mb-2">
