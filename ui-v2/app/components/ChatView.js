@@ -274,7 +274,7 @@ export default function ChatView({ activeAgent, messages, isLoading, onSendMessa
           
           {/* Welcome State */}
           {!hasMessages && !isLoading && (
-            <div className="flex flex-col items-center justify-center py-10 gap-5 text-center w-full">
+            <div className="flex flex-col items-center justify-center py-16 gap-5 text-center w-full">
               <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center border border-primary/20 shadow-lg">
                 <span className="material-symbols-outlined text-primary text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>smart_toy</span>
               </div>
