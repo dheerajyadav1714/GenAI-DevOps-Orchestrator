@@ -141,7 +141,8 @@ def select_model(user_request):
     """Route complex tasks to Gemini Pro for deeper reasoning, Flash for speed"""
     complex_keywords = ['architect', 'design', 'migration', 'security scan',
                         'postmortem', 'debate', 'optimize cost', 'provision',
-                        'infrastructure', 'vulnerability', 'compliance', 'risk assessment']
+                        'infrastructure', 'vulnerability', 'compliance', 'risk assessment',
+                        'vpc', 'gke', 'cloud run', 'terraform', 'kubernetes']
     if any(kw in user_request.lower() for kw in complex_keywords):
         logger.info(f"Model routing: Using Gemini Pro for complex request")
         return gemini_pro
@@ -743,7 +744,11 @@ User request: "{user_request}"
                     tool = step["tool"]
                     step["action"] = {"reply": "send", "slack": "send", "jenkins": "trigger"}.get(tool, "unknown")
                 # Skip reply steps from Gemini (we generate our own)
+                # EXCEPT if the AI strictly wants to talk/clarify instead of calling a tool
                 if step["tool"] != "reply":
+                    validated.append(step)
+                elif len(steps) == 1:
+                    # If the AI ONLY output a reply, let it through
                     validated.append(step)
             steps = validated
 
@@ -1891,9 +1896,13 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                                     continue
                                 
                                 # Fix 3: Wrap unquoted node labels in double quotes for complex strings
+                                # Handles various shapes: [], (), (()), [[]], {{}}, >]
                                 # Matches node definition like: NodeID[🏠 "Complex Label"] or NodeID[Simple Label]
-                                # Does NOT match if already quoted: NodeID["Already quoted"]
-                                line = re.sub(r'([A-Za-z0-9_]+)\[\s*(?!"\s*)([^"\]]+)\]', r'\1["\2"]', line)
+                                line = re.sub(r'([A-Za-z0-9_-]+)\[\s*(?!"\s*)([^"\]]+)\]', r'\1["\2"]', line)
+                                line = re.sub(r'([A-Za-z0-9_-]+)\(\s*(?!"\s*)([^"\]]+)\)', r'\1("\2")', line)
+                                line = re.sub(r'([A-Za-z0-9_-]+)\(\(\s*(?!"\s*)([^"\]]+)\)\)', r'\1(("\2"))', line)
+                                line = re.sub(r'([A-Za-z0-9_-]+)\[\[\s*(?!"\s*)([^"\]]+)\]\]', r'\1[["\2"]]', line)
+                                line = re.sub(r'([A-Za-z0-9_-]+)\{\{\s*(?!"\s*)([^"\]]+)\}\}', r'\1{{"\2"}}', line)
 
                                 # Fix 4: Break down curly-brace grouped connections for Draw.io compatibility
                                 # Matches: Source --> {Target1 Target2 ...}
@@ -1904,8 +1913,12 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                                     for t in targets:
                                         out.append(f"{prefix}{source}{edge}{t}")
                                     continue
+                                
+                                # Fix 5: Ensure node IDs with reserved words or special chars are handled
+                                # (Generic catch-all for remaining unquoted labels)
+                                line = re.sub(r'([A-Za-z0-9_-]+)>\s*(?!"\s*)([^"\]]+)\]', r'\1>"\2"]', line)
 
-                                # Fix 5: Break down multi-node class assignments for Draw.io compatibility
+                                # Fix 6: Break down multi-node class assignments for Draw.io compatibility
                                 # Matches: class A, B, C net
                                 class_multi = re.match(r'^(\s*)class\s+([\w\s,]+)\s+(\w+)\s*$', line)
                                 if class_multi:
@@ -1915,9 +1928,13 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                                     for n in nodes:
                                         out.append(f"{prefix}class {n} {style}")
                                     continue
-
+                                
                                 out.append(line)
-                            return '\n'.join(out)
+                            
+                            final_code = '\n'.join(out)
+                            if not final_code.strip().startswith('graph'):
+                                final_code = 'graph TD\n' + final_code
+                            return final_code
 
                         mermaid_code = sanitize_mermaid(mermaid_code)
                         context["mermaid_diagram"] = mermaid_code
