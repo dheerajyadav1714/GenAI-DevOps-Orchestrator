@@ -41,17 +41,17 @@ export default function DashboardView({ metrics }) {
   const gc = (grade) => GRADE_COLORS[grade] || GRADE_COLORS['N/A'];
 
   return (
-    <div className="flex flex-col p-6 gap-8 pb-32">
+    <div className="flex flex-col p-5 gap-5 pb-24">
       
       {/* Hero Section */}
-      <div className="liquid-glass rounded-3xl p-8 relative overflow-hidden">
+      <div className="liquid-glass rounded-2xl p-5 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/8 via-transparent to-secondary/8 pointer-events-none" />
-        <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl md:text-3xl font-black tracking-tight text-on-surface">
+            <h1 className="text-xl md:text-2xl font-black tracking-tight text-on-surface">
               Command Center
             </h1>
-            <p className="text-sm text-on-surface opacity-80 mt-1 font-medium">
+            <p className="text-xs text-on-surface opacity-80 mt-0.5 font-medium">
               Autonomous Cloud Operating System — {metrics?.total_workflows || 0} workflows executed
             </p>
           </div>
