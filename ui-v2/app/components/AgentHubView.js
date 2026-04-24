@@ -1,8 +1,8 @@
 import React from 'react';
 
 const agents = [
-  { 
-    id: 'agile', name: 'Agile PM', tagline: 'Plan • Track • Deliver', 
+  {
+    id: 'agile', name: 'Agile PM', tagline: 'Plan • Track • Deliver',
     icon: 'assignment', accent: 'from-violet-500/20 to-violet-500/5', accentBorder: 'border-violet-500/20',
     accentText: 'text-violet-400', accentBg: 'bg-violet-500/10',
     capabilities: ['Jira CRUD', 'Sprint Health', 'User Stories', 'Velocity Tracking'],
@@ -11,18 +11,18 @@ const agents = [
       { label: 'Sprint Report', prompt: 'Generate a sprint health report for the SCRUM project' },
     ]
   },
-  { 
-    id: 'architect', name: 'Platform Architect', tagline: 'Design • Debate • Build', 
+  {
+    id: 'architect', name: 'Platform Architect', tagline: 'Design • Debate • Build',
     icon: 'architecture', accent: 'from-blue-500/20 to-blue-500/5', accentBorder: 'border-blue-500/20',
     accentText: 'text-blue-400', accentBg: 'bg-blue-500/10',
     capabilities: ['Multi-Agent Debate', 'Cloud Migration', 'Mermaid Diagrams', 'Architecture Design'],
     actions: [
       { label: 'Design Architecture', prompt: 'Design a cloud-native microservices architecture for an e-commerce application on GCP with auto-scaling, CDN, and managed database' },
-      { label: 'Cloud Migration', prompt: 'Read the file infrastructure/inventory.csv from dheerajyadav1714/ci_cd and design a cloud migration plan to GCP' },
+      { label: 'Cloud Migration', prompt: 'Read the file inventory.csv from dheerajyadav1714/ci_cd repo and design a cloud migration plan to GCP' },
     ]
   },
-  { 
-    id: 'devops', name: 'DevOps Engineer', tagline: 'Automate • Deploy • Break', 
+  {
+    id: 'devops', name: 'DevOps Engineer', tagline: 'Automate • Deploy • Break',
     icon: 'build_circle', accent: 'from-orange-500/20 to-orange-500/5', accentBorder: 'border-orange-500/20',
     accentText: 'text-orange-400', accentBg: 'bg-orange-500/10',
     capabilities: ['Pipeline Gen', 'Jenkins CI/CD', 'Chaos Engineering', 'Self-Healing'],
@@ -31,8 +31,8 @@ const agents = [
       { label: 'Inject Chaos', prompt: 'Inject chaos into the repository dheerajyadav1714/ci_cd. Break the code in src/bug.py and trigger the Jenkins pipeline to test self-healing' },
     ]
   },
-  { 
-    id: 'sre', name: 'SRE', tagline: 'Monitor • Fix • Learn', 
+  {
+    id: 'sre', name: 'SRE', tagline: 'Monitor • Fix • Learn',
     icon: 'monitoring', accent: 'from-cyan-500/20 to-cyan-500/5', accentBorder: 'border-cyan-500/20',
     accentText: 'text-cyan-400', accentBg: 'bg-cyan-500/10',
     capabilities: ['Log Analysis', 'Auto Bug Fix', 'Postmortem', 'Risk Prediction'],
@@ -41,8 +41,8 @@ const agents = [
       { label: 'Generate Postmortem', prompt: 'Generate an incident postmortem for the auth service outage in dheerajyadav1714/ci_cd' },
     ]
   },
-  { 
-    id: 'finops', name: 'FinOps Director', tagline: 'Optimize • Rightsize • Save', 
+  {
+    id: 'finops', name: 'FinOps Director', tagline: 'Optimize • Rightsize • Save',
     icon: 'savings', accent: 'from-emerald-500/20 to-emerald-500/5', accentBorder: 'border-emerald-500/20',
     accentText: 'text-emerald-400', accentBg: 'bg-emerald-500/10',
     capabilities: ['Cost Optimization', 'Resource Right-Sizing', 'FinOps Reports'],
@@ -51,8 +51,8 @@ const agents = [
       { label: 'Right-Size Resources', prompt: 'Review all infrastructure files in dheerajyadav1714/ci_cd and recommend cost optimizations' },
     ]
   },
-  { 
-    id: 'security', name: 'Security Engineer', tagline: 'Scan • Detect • Remediate', 
+  {
+    id: 'security', name: 'Security Engineer', tagline: 'Scan • Detect • Remediate',
     icon: 'shield', accent: 'from-red-500/20 to-red-500/5', accentBorder: 'border-red-500/20',
     accentText: 'text-red-400', accentBg: 'bg-red-500/10',
     capabilities: ['Vulnerability Scanner', 'Drift Detection', 'Compliance', 'Auto-Patching'],
@@ -61,8 +61,8 @@ const agents = [
       { label: 'Predict Risk', prompt: 'Run a deployment risk prediction analysis for the auth service in dheerajyadav1714/ci_cd' },
     ]
   },
-  { 
-    id: 'qa', name: 'QA Engineer', tagline: 'Test • Review • Validate', 
+  {
+    id: 'qa', name: 'QA Engineer', tagline: 'Test • Review • Validate',
     icon: 'bug_report', accent: 'from-amber-500/20 to-amber-500/5', accentBorder: 'border-amber-500/20',
     accentText: 'text-amber-400', accentBg: 'bg-amber-500/10',
     capabilities: ['Test Generator', 'Code Review', 'Coverage Analysis'],
@@ -71,8 +71,8 @@ const agents = [
       { label: 'Generate Docs', prompt: 'Generate comprehensive API documentation for dheerajyadav1714/ci_cd and publish to Confluence' },
     ]
   },
-  { 
-    id: 'cloud', name: 'Cloud Engineer', tagline: 'Explore • Provision • Remediate', 
+  {
+    id: 'cloud', name: 'Cloud Engineer', tagline: 'Explore • Provision • Remediate',
     icon: 'cloud', accent: 'from-teal-500/20 to-teal-500/5', accentBorder: 'border-teal-500/20',
     accentText: 'text-teal-400', accentBg: 'bg-teal-500/10',
     capabilities: ['GCP Explorer', 'Terraform Provisioning', 'Auto-Remediation', 'Zero-Touch Infra'],
@@ -110,13 +110,13 @@ export default function AgentHubView({ onAgentClick }) {
       {/* Agent Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
         {agents.map((agent) => (
-          <div 
+          <div
             key={agent.id}
             className={`liquid-glass rounded-2xl p-6 relative overflow-hidden group transition-all duration-300 hover:scale-[1.01] border ${agent.accentBorder}`}
           >
             {/* Gradient Background */}
             <div className={`absolute inset-0 bg-gradient-to-br ${agent.accent} pointer-events-none opacity-50`} />
-            
+
             <div className="relative z-10">
               {/* Header */}
               <div className="flex items-start justify-between mb-4">
@@ -147,7 +147,7 @@ export default function AgentHubView({ onAgentClick }) {
               {/* Quick Actions */}
               <div className="flex gap-2">
                 {agent.actions.map((action, j) => (
-                  <button 
+                  <button
                     key={j}
                     onClick={() => handleAction(agent, action)}
                     className={`flex-1 text-xs font-bold px-3 py-2.5 rounded-xl transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] ${agent.accentBg} ${agent.accentText} border ${agent.accentBorder} hover:shadow-lg`}

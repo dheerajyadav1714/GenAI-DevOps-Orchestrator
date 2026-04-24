@@ -142,7 +142,7 @@ def select_model(user_request):
     complex_keywords = ['architect', 'design', 'migration', 'security scan',
                         'postmortem', 'debate', 'optimize cost', 'provision',
                         'infrastructure', 'vulnerability', 'compliance', 'risk assessment',
-                        'vpc', 'gke', 'cloud run', 'terraform', 'kubernetes']
+                        'vpc', 'gke', 'cloud run', 'terraform', 'kubernetes', 'optimize']
     if any(kw in user_request.lower() for kw in complex_keywords):
         logger.info(f"Model routing: Using Gemini Pro for complex request")
         return gemini_pro
@@ -659,6 +659,7 @@ Available tools:
 - slack.send: {{"text": "message"}}
 - calendar.create_event: {{"summary": "Meeting", "start_time": "2026-04-03T10:00:00", "end_time": "2026-04-03T11:00:00"}}
 - log_analysis.analyze: {{"log": "error text"}}
+- metrics.dora: {{}} (Returns pre-calculated DORA metrics: Deployment Frequency, Lead Time, MTTR, Change Failure Rate. Use this specifically when asked for DORA metrics.)
 - database.query: {{"question": "show all workflows"}}  (converts natural language to SQL against AlloyDB — use for any data/metrics/history question)
 - rag.search: {{"query": "divide by zero error"}}  (search past incidents for similar issues)
 - rag.runbooks: {{"query": "build failure"}}  (search runbooks)
@@ -718,9 +719,10 @@ User request: "{user_request}"
                 logger.warning(f"active_model failed or timed out ({e}), falling back to gemini_flash for intent parsing")
                 response = await asyncio.to_thread(gemini_flash.generate_content, plan_prompt)
             raw = response.text.strip()
-            logger.info(f"Gemini plan: {raw}")
+            logger.info(f"Gemini plan output: {raw}")
 
-            match = re.search(r'\[\s*\{.*\}\s*\]', raw, re.DOTALL)
+            # Robust JSON extraction: matches [] or [{...}]
+            match = re.search(r'\[\s*(?:\{.*\}|)\s*\]', raw, re.DOTALL)
             steps = json.loads(match.group(0)) if match else []
 
             # Validate steps
@@ -1502,6 +1504,39 @@ End with a deployment note."""
                             context["runbooks"] = []
                             result = {"runbooks": []}
 
+                    # ---------- METRICS ----------
+                    elif tool == "metrics" and action == "dora":
+                        try:
+                            # Call the get_dora_metrics async function directly
+                            dora_data = await get_dora_metrics()
+                            if "error" in dora_data:
+                                context["dora_metrics"] = f"Failed to retrieve DORA metrics: {dora_data['error']}"
+                                result = {"status": "error", "message": dora_data['error']}
+                            else:
+                                df = dora_data.get('deployment_frequency', 0)
+                                lt = dora_data.get('lead_time_display', 'N/A')
+                                mttr = dora_data.get('mttr_display', 'N/A')
+                                cfr = dora_data.get('change_failure_rate', 0)
+                                grade = dora_data.get('overall_grade', 'N/A')
+                                
+                                md = f"""### 📊 DORA Metrics Report (Last 30 Days)
+**Overall Platform Grade:** {grade}
+
+| Metric | Value | Grade |
+| --- | --- | --- |
+| 🚀 Deployment Frequency | {df}/day | {dora_data.get('df_grade', 'N/A')} |
+| ⏱️ Lead Time for Changes | {lt} | {dora_data.get('lt_grade', 'N/A')} |
+| 🚑 Mean Time To Recovery | {mttr} | {dora_data.get('mttr_grade', 'N/A')} |
+| 💥 Change Failure Rate | {cfr}% | {dora_data.get('cfr_grade', 'N/A')} |
+
+*(Based on {dora_data.get('total_deployments_30d', 0)} deployments and {dora_data.get('total_pipeline_runs', 0)} CI/CD runs)*
+"""
+                                context["dora_metrics"] = md
+                                result = {"status": "success", "dora_data": dora_data}
+                        except Exception as e:
+                            logger.error(f"DORA metrics failed: {e}")
+                            result = {"error": str(e)}
+
                     # ---------- DATABASE (Explainable Text-to-SQL) ----------
                     elif tool == "database" and action == "query":
                         sql_prompt = f"""You are an expert PostgreSQL developer. Write a SQL query for AlloyDB given this schema:
@@ -1727,21 +1762,29 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                         fo_pr_url = None
                         try:
                             # Branch
-                            requests.post(f"{MCP_SERVERS['github']}/branch", json={"repo": fo_repo, "branch": fo_branch, "base": "main"}, timeout=15)
+                            br = mcp_request("post", f"{MCP_SERVERS['github']}/create-branch", json={"repo": fo_repo, "branch": fo_branch, "base": "main"}, timeout=15)
+                            if br.status_code not in [200, 201] and "already exists" not in br.text.lower():
+                                logger.warning(f"FinOps branch creation failed: {br.text}")
+                            
                             # Commit
-                            cc = requests.post(f"{MCP_SERVERS['github']}/commit", json={
+                            cc = mcp_request("post", f"{MCP_SERVERS['github']}/commit", json={
                                 "repo": fo_repo, "branch": fo_branch, "path": fo_file,
                                 "content": fo_yaml, "message": "chore(finops): right-size resource limits for cost optimization"
                             }, timeout=15)
-                            if cc.status_code == 200:
+                            
+                            if cc.status_code in [200, 201]:
                                 # PR
                                 pr_body = "## 💸 FinOps AI Optimization\nThis PR right-sizes the kubernetes resource requests/limits based on historical metrics analysis.\n\n**Estimated Savings:** $420/month 📉\n\n> Auto-generated by GenAI DevOps Orchestrator."
-                                pr = requests.post(f"{MCP_SERVERS['github']}/pr", json={
+                                pr = mcp_request("post", f"{MCP_SERVERS['github']}/create-pr", json={
                                     "repo": fo_repo, "title": f"FinOps: Optimize resource limits in {fo_file}",
                                     "head": fo_branch, "base": "main", "body": pr_body
                                 }, timeout=15)
                                 if pr.status_code in [200, 201]:
-                                    fo_pr_url = pr.json().get("html_url")
+                                    fo_pr_url = pr.json().get("html_url", pr.json().get("url"))
+                                else:
+                                    logger.warning(f"FinOps PR creation failed: {pr.text}")
+                            else:
+                                logger.warning(f"FinOps commit failed: {cc.text}")
                         except Exception as fop_err:
                             logger.warning(f"FinOps github flow failed: {fop_err}")
                             
@@ -1869,7 +1912,8 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                             "   classDef shared fill:#f3e5f5,stroke:#4a148c,color:#4a148c\n"
                             "   classDef cache fill:#fff8e1,stroke:#f57f17,color:#f57f17\n"
                             "10. **Connections**: Show data flow with labeled edges (e.g., --'HTTPS 443'-->, --'Private IP'-->, --'VPC Peering'-->). Each connection on a separate line.\n"
-                            "11. **Syntax Rules**: Start with 'graph TD'. Use double-quotes for ALL labels. NEVER use curly braces {} for grouping connections. Write each connection on its own line.\n\n"
+                            "11. **Syntax Rules**: Start with 'graph TD'. Use double-quotes for ALL labels. NEVER use curly braces {} for grouping connections. Write each connection on its own line. NEVER use nested quotes inside a label (e.g. use HTTPS Traffic, not \"HTTPS\" Traffic).\n"
+                            "12. **NO PARENTHESES**: DO NOT use parentheses () anywhere inside any node label or edge label string. Parentheses break the Mermaid parser. Use brackets [] or plain text instead.\n\n"
                             "Output ONLY raw mermaid code. Make it comprehensive with 25-40 nodes minimum."
                         )
                         mermaid_code = await generate_with_fallback(mermaid_prompt)
@@ -1884,7 +1928,17 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                             for line in lines:
                                 # Fix 1: Remove literal \n sequences in classDef / style lines
                                 line = line.replace('\\n', ' ')
-                                # Fix 2: Expand comma-separated targets in edge lines
+                                
+                                # Fix 2: Strip parentheses and nested quotes from edge labels
+                                # E.g., LB -- "HTTP("S") Traffic" --> CA_WA becomes LB -- "HTTPS Traffic" --> CA_WA
+                                def clean_edge(m):
+                                    # m.group(0) is the entire '-- "label" -->' or '-- label -->' string
+                                    # We just strip (, ) and " from the inside
+                                    inside = m.group(1).replace('"', '').replace('(', '').replace(')', '')
+                                    return f'-- "{inside}" -->'
+                                line = re.sub(r'--\s*"?([^"-]+)"?\s*-->', clean_edge, line)
+
+                                # Fix 3: Expand comma-separated targets in edge lines
                                 # Matches: A --> B, C, D  or  A -- "label" --> B, C
                                 edge_multi = re.match(r'^(\s*)([\w\[\](){}"\'-]+\s*(?:--[>\-]*\s*(?:"[^"]*"\s*)?-->\s*|-->|---)\s*)([\w\[\](){}"\']+(?:\s*,\s*[\w\[\](){}"\']+)+)\s*$', line)
                                 if edge_multi:
@@ -2643,19 +2697,26 @@ Format as clean Markdown suitable for a README.md or docs site."""
                         doc_branch = f"docs/auto-generate-{str(uuid.uuid4())[:6]}"
                         doc_pr_url = None
                         try:
-                            requests.post(f"{MCP_SERVERS['github']}/branch", json={"repo": doc_repo, "branch": doc_branch, "base": "main"}, timeout=15)
-                            cc = requests.post(f"{MCP_SERVERS['github']}/commit", json={
+                            br = mcp_request("post", f"{MCP_SERVERS['github']}/create-branch", json={"repo": doc_repo, "branch": doc_branch, "base": "main"}, timeout=15)
+                            if br.status_code not in [200, 201] and "already exists" not in br.text.lower():
+                                logger.warning(f"Docs branch creation failed: {br.text}")
+
+                            cc = mcp_request("post", f"{MCP_SERVERS['github']}/commit", json={
                                 "repo": doc_repo, "branch": doc_branch, "path": "DOCS.md",
                                 "content": docs_content, "message": f"docs: Auto-generate {doc_type} documentation"
                             }, timeout=15)
-                            if cc.status_code == 200:
-                                pr = requests.post(f"{MCP_SERVERS['github']}/pr", json={
+                            if cc.status_code in [200, 201]:
+                                pr = mcp_request("post", f"{MCP_SERVERS['github']}/create-pr", json={
                                     "repo": doc_repo, "title": f"📝 Auto-Generated {doc_type} Documentation",
                                     "head": doc_branch, "base": "main",
                                     "body": f"## 📝 AI-Generated Documentation\n\nThis PR adds comprehensive {doc_type} documentation generated by analyzing the repository source code.\n\n> Auto-generated by GenAI DevOps Orchestrator."
                                 }, timeout=15)
                                 if pr.status_code in [200, 201]:
-                                    doc_pr_url = pr.json().get("html_url")
+                                    doc_pr_url = pr.json().get("html_url", pr.json().get("url"))
+                                else:
+                                    logger.warning(f"Docs PR creation failed: {pr.text}")
+                            else:
+                                logger.warning(f"Docs commit failed: {cc.text}")
                         except Exception as doc_err:
                             logger.warning(f"Docs PR failed: {doc_err}")
 
