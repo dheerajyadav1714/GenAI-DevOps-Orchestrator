@@ -364,7 +364,7 @@ export default function Home() {
       <main className={`flex-1 flex flex-col md:ml-20 relative transition-all duration-500 ${activeView === 'CHAT' ? 'h-screen overflow-hidden' : 'min-h-screen pb-24 md:pb-0'}`}>
         
         {/* Top App Bar — Ultra Premium Glass */}
-        <header className="flex justify-between items-center w-full px-6 md:px-10 h-16 pt-1 backdrop-blur-2xl border-b sticky top-0 z-50 flex-shrink-0 transition-all bg-surface-container-low/80 border-outline-variant/20 shadow-[0_10px_40px_rgba(0,0,0,0.08)]">
+        <header className="flex justify-between items-center w-full px-6 md:px-10 h-[72px] pt-2 backdrop-blur-2xl border-b sticky top-0 z-50 flex-shrink-0 transition-all bg-surface-container-low/80 border-outline-variant/20 shadow-[0_10px_40px_rgba(0,0,0,0.08)]">
           <div className="flex items-center gap-4">
              <div className="flex flex-col">
                 <h1 className="font-['Inter'] font-black text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary-container tracking-tighter text-xl">

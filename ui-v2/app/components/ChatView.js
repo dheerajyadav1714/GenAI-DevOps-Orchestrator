@@ -268,7 +268,7 @@ export default function ChatView({ activeAgent, messages, isLoading, onSendMessa
       {/* Messages Area */}
       <div 
         ref={scrollRef}
-        className="flex-1 overflow-y-auto pt-6 pb-36 px-4 md:px-8 flex flex-col items-center no-scrollbar"
+        className="flex-1 overflow-y-auto pt-10 pb-36 px-4 md:px-8 flex flex-col items-center no-scrollbar"
       >
         <div className="w-full max-w-3xl flex flex-col gap-6">
           

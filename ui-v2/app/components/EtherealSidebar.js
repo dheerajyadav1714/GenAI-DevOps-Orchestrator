@@ -46,10 +46,12 @@ export default function EtherealSidebar({ activeView, setActiveView, isDark, onT
               {item.icon}
             </span>
             
-            {/* Tooltip */}
-            <div className="absolute left-16 px-3 py-1.5 rounded-lg bg-surface-container-highest text-on-surface text-[10px] font-bold tracking-widest uppercase opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap shadow-xl border border-outline-variant/30 z-[70]">
-              {item.label}
-            </div>
+            {/* Tooltip — only on hover, not for active */}
+            {activeView !== item.id && (
+              <div className="absolute left-16 px-3 py-1.5 rounded-lg bg-surface-container-highest text-on-surface text-[10px] font-bold tracking-widest uppercase opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap shadow-xl border border-outline-variant/30 z-[70]">
+                {item.label}
+              </div>
+            )}
           </button>
         ))}
       </div>
