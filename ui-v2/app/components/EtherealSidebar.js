@@ -55,7 +55,7 @@ export default function EtherealSidebar({ activeView, setActiveView, isDark, onT
       </div>
 
       {/* Bottom Controls */}
-      <div className="flex flex-row md:flex-col gap-4 items-center md:mb-12 relative md:mt-auto">
+      <div className="flex flex-row md:flex-col gap-3 items-center md:mb-8 relative md:mt-auto">
         {/* Settings Button */}
         <button 
           onClick={onToggleSettings}
