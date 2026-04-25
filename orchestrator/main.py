@@ -694,13 +694,13 @@ Available tools:
 - jenkins.trigger: {{"job_name": "test-pipeline", "parameters": {{"FAIL": true}}}}
 - jenkins.get_logs: {{"job_name": "test-pipeline", "build_number": 175}}  (get console logs for a specific build)
 - jenkins.get_status: {{"job_name": "test-pipeline", "build_number": 175}}  (get build status)
-- jenkins.last_failed: {{"job_name": "test-pipeline"}}  (get the last failed build info)
-- jenkins.last_build: {{"job_name": "test-pipeline"}}  (get the last build info regardless of status)
+- jenkins.last_failed: {{"job_name": "test-pipeline"}}  (gets EXACTLY ONE most recent failed build directly from Jenkins)
+- jenkins.last_build: {{"job_name": "test-pipeline"}}  (gets EXACTLY ONE most recent build info directly from Jenkins)
 - slack.send: {{"text": "message"}}
 - calendar.create_event: {{"summary": "Meeting", "start_time": "2026-04-03T10:00:00", "end_time": "2026-04-03T11:00:00"}}
 - log_analysis.analyze: {{"log": "the full error text or traceback to analyze"}}  (use this for ANY log analysis, error analysis, traceback analysis request — paste the entire log/error text into the 'log' field)
 - metrics.dora: {{}} (Returns pre-calculated DORA metrics: Deployment Frequency, Lead Time, MTTR, Change Failure Rate. Use this specifically when asked for DORA metrics.)
-- database.query: {{"question": "show all workflows"}}  (converts natural language to SQL against AlloyDB — use for any data/metrics/history question)
+- database.query: {{"question": "show last 5 failed builds"}}  (converts natural language to SQL against AlloyDB — MUST use this for requests asking for multiple history records like "show all workflows" or "last 5 failed builds")
 - rag.search: {{"query": "divide by zero error"}}  (search past incidents for similar issues)
 - rag.runbooks: {{"query": "build failure"}}  (search runbooks)
 - pipeline.generate: {{"repo": "owner/repo"}}  (analyze repo structure and auto-generate a Jenkinsfile CI/CD pipeline)
@@ -1782,7 +1782,7 @@ Return ONLY the raw SQL query string. No Markdown formatting, no code blocks (e.
                                     md = "| " + " | ".join(headers) + " |\n| " + " | ".join(["---"]*len(headers)) + " |\n"
                                     for row in data_rows:
                                         md += "| " + " | ".join(row) + " |\n"
-                                    context["db_result"] = f"### 🔍 Explainable AI — Query Transparency\n**Question:** {params['question']}\n**SQL Generated:**\n```sql\n{raw_sql}\n```\n**Results ({len(data_rows)} rows):**\n\n{md}"
+                                    context["db_result"] = f"### 🔍 Explainable AI — Query Transparency\n**Question:** {params['question']}\n**SQL Generated:**\n```sql\n{raw_sql}\n```\n**Results ({len(data_rows)} rows returned):**\n\n{md}\n\n[SYSTEM INSTRUCTION TO AGENT: When summarizing this table to the user, state exactly that {len(data_rows)} rows were found. Do not claim to show 25 rows if {len(data_rows)} were returned.]"
                                 else:
                                     context["db_result"] = f"### 🔍 Explainable AI — Query Transparency\n**Question:** {params['question']}\n**SQL Generated:**\n```sql\n{raw_sql}\n```\n**Results:** No matching records found."
                                 result = {"sql": raw_sql, "rows": len(data_rows), "status": "success"}
