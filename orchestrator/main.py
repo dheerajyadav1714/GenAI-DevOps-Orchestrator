@@ -137,6 +137,9 @@ gemini_flash = GenerativeModel("gemini-2.5-flash")
 gemini_pro = GenerativeModel("gemini-2.5-pro")
 gemini_model = gemini_flash  # Default for backward compatibility
 
+# Global semaphore to prevent concurrent Gemini calls from rate-limiting each other
+_gemini_semaphore = asyncio.Semaphore(2)  # Allow max 2 concurrent Gemini calls
+
 def select_model(user_request):
     """Route complex tasks to Gemini Pro for deeper reasoning, Flash for speed"""
     complex_keywords = ['architect', 'design', 'migration', 'security scan',
@@ -224,24 +227,35 @@ def mcp_request(method, url, retries=3, **kwargs):
 
 
 # ========== GEMINI RETRY HELPER (429 backoff) ==========
-async def gemini_with_retry(model, prompt, retries=3):
-    """Call Gemini with exponential backoff for 429 rate limit errors"""
-    for attempt in range(retries):
-        try:
-            resp = await asyncio.to_thread(model.generate_content, prompt)
-            return resp
-        except Exception as e:
-            err_str = str(e)
-            if "429" in err_str and attempt < retries - 1:
-                wait_time = 2 ** (attempt + 1)  # 2s, 4s, 8s
-                logger.warning(f"Gemini 429 rate limit hit, retrying in {wait_time}s (attempt {attempt+1}/{retries})")
-                await asyncio.sleep(wait_time)
-            elif attempt < retries - 1 and ("500" in err_str or "503" in err_str or "connection" in err_str.lower()):
-                wait_time = 2 ** (attempt + 1)
-                logger.warning(f"Gemini transient error, retrying in {wait_time}s: {err_str[:100]}")
-                await asyncio.sleep(wait_time)
-            else:
-                raise
+async def gemini_with_retry(model, prompt, retries=3, timeout=25):
+    """Call Gemini with exponential backoff for 429 rate limit errors + per-call timeout"""
+    async with _gemini_semaphore:  # Serialize to prevent concurrent 429s
+        for attempt in range(retries):
+            try:
+                resp = await asyncio.wait_for(
+                    asyncio.to_thread(model.generate_content, prompt),
+                    timeout=timeout
+                )
+                return resp
+            except asyncio.TimeoutError:
+                if attempt < retries - 1:
+                    wait_time = 2 ** (attempt + 1)
+                    logger.warning(f"Gemini call timed out ({timeout}s), retrying in {wait_time}s (attempt {attempt+1}/{retries})")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise Exception(f"Gemini timed out after {retries} attempts")
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str and attempt < retries - 1:
+                    wait_time = 2 ** (attempt + 1)  # 2s, 4s, 8s
+                    logger.warning(f"Gemini 429 rate limit hit, retrying in {wait_time}s (attempt {attempt+1}/{retries})")
+                    await asyncio.sleep(wait_time)
+                elif attempt < retries - 1 and ("500" in err_str or "503" in err_str or "connection" in err_str.lower()):
+                    wait_time = 2 ** (attempt + 1)
+                    logger.warning(f"Gemini transient error, retrying in {wait_time}s: {err_str[:100]}")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise
 
 
 # ========== ANALYZE FAILURE ==========
@@ -678,9 +692,13 @@ Available tools:
 - github.merge_pr: {{"repo": "owner/repo", "pr_number": 7, "merge_method": "merge"}}
 - github.review_pr: {{"repo": "owner/repo", "pr_number": 7}}  (AI reviews the PR diff for bugs, security, quality)
 - jenkins.trigger: {{"job_name": "test-pipeline", "parameters": {{"FAIL": true}}}}
+- jenkins.get_logs: {{"job_name": "test-pipeline", "build_number": 175}}  (get console logs for a specific build)
+- jenkins.get_status: {{"job_name": "test-pipeline", "build_number": 175}}  (get build status)
+- jenkins.last_failed: {{"job_name": "test-pipeline"}}  (get the last failed build info)
+- jenkins.last_build: {{"job_name": "test-pipeline"}}  (get the last build info regardless of status)
 - slack.send: {{"text": "message"}}
 - calendar.create_event: {{"summary": "Meeting", "start_time": "2026-04-03T10:00:00", "end_time": "2026-04-03T11:00:00"}}
-- log_analysis.analyze: {{"log": "error text"}}
+- log_analysis.analyze: {{"log": "the full error text or traceback to analyze"}}  (use this for ANY log analysis, error analysis, traceback analysis request — paste the entire log/error text into the 'log' field)
 - metrics.dora: {{}} (Returns pre-calculated DORA metrics: Deployment Frequency, Lead Time, MTTR, Change Failure Rate. Use this specifically when asked for DORA metrics.)
 - database.query: {{"question": "show all workflows"}}  (converts natural language to SQL against AlloyDB — use for any data/metrics/history question)
 - rag.search: {{"query": "divide by zero error"}}  (search past incidents for similar issues)
@@ -739,9 +757,13 @@ RULES:
 3. For "list tickets" or "show tickets", use jira.search_issues with appropriate JQL.
 4. For "fix ticket X", use code.generate_fix.
 5. For Jenkins trigger, BRANCH parameter is optional (defaults to main).
-6. IMPORTANT: Build numbers (e.g. "Build #96") are NOT the same as PR numbers. PRs usually have low numbers (e.g. #17, #18). If user says "review PR" with a build number, first use github.list_prs to find the correct PR, then use github.review_pr with the correct pr_number.
-7. For "review PR", always use the actual GitHub PR number, NOT the Jenkins build number.
-8. CRITICAL: When using github.create_pr or jira.create_issue, you MUST provide a comprehensive, multi-line string for the `body` or `description` parameter. Never let it be blank or "None". Elaborate professionally on the fix or the issue.
+6. For "show logs" or "get logs for build X", use jenkins.get_logs with job_name and build_number.
+7. For "show last failed build" or "last failed", use jenkins.last_failed with job_name.
+8. For "show build status" or "check build #X", use jenkins.get_status with job_name and build_number.
+9. IMPORTANT: Build numbers (e.g. "Build #96") are NOT the same as PR numbers. PRs usually have low numbers (e.g. #17, #18). If user says "review PR" with a build number, first use github.list_prs to find the correct PR, then use github.review_pr with the correct pr_number.
+10. For "review PR", always use the actual GitHub PR number, NOT the Jenkins build number.
+11. For log/error/traceback analysis requests like "analyze this log", "what does this error mean", ALWAYS use log_analysis.analyze and put the ENTIRE log/error text in the 'log' field. Do NOT use any other tool for error analysis.
+12. CRITICAL: When using github.create_pr or jira.create_issue, you MUST provide a comprehensive, multi-line string for the `body` or `description` parameter. Never let it be blank or "None". Elaborate professionally on the fix or the issue.
 9. CRITICAL: When user asks to "fix a bug" or "fix the bug in X", you MUST use code.generate_fix as the ONLY step. code.generate_fix already handles everything internally (reads file, generates fix, creates branch, creates PR, notifies Slack). Do NOT add separate jira.create_issue or github.create_pr steps — they will cause duplicates.
 10. CRITICAL: Do NOT use placeholder references like PREVIOUS_STEP_RESULT or step1.key in params EXCEPT when specifically instructed to do so by a tool (e.g., migration.design's inventory_csv). Otherwise, use actual concrete values like "dheerajyadav1714/ci_cd".
 11. ZERO-TO-CLOUD MASTER WORKFLOW: If the user asks you to handle Agile tickets, provision infrastructure, generate pipelines, and optimize costs all at once, you MUST ONLY output `agile.generate_ticket` and `migration.design`. DO NOT output the provision, pipeline, or finops steps. The Orchestrator will automatically chain those downstream AFTER the user approves the architecture design!
@@ -784,7 +806,7 @@ User request: "{user_request}"
                 step.setdefault("params", {})
                 if "action" not in step:
                     tool = step["tool"]
-                    step["action"] = {"reply": "send", "slack": "send", "jenkins": "trigger"}.get(tool, "unknown")
+                    step["action"] = {"reply": "send", "slack": "send", "jenkins": "trigger"}.get(tool, step.get("action", "unknown"))
                 # Skip reply steps from Gemini (we generate our own)
                 # EXCEPT if the AI strictly wants to talk/clarify instead of calling a tool
                 if step["tool"] != "reply":
@@ -1200,6 +1222,52 @@ Include SECURITY_SCORE: PASS/FAIL based on findings.
                             result = {"status": "reviewed", "verdict": review_text[-200:]}
 
                     # ---------- JENKINS ----------
+                    elif tool == "jenkins" and action == "get_logs":
+                        jn = params.get("job_name", "test-pipeline")
+                        bn = params.get("build_number")
+                        if bn:
+                            resp = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['jenkins']}/logs/{jn}/{bn}", timeout=30)
+                            if resp.status_code == 200:
+                                logs_text = resp.text[:5000]  # Truncate for context
+                                result = {"status": "logs_retrieved", "job_name": jn, "build_number": bn, "logs": logs_text}
+                                context["jenkins_logs"] = logs_text
+                            else:
+                                result = {"status": "error", "message": f"Could not fetch logs for {jn} #{bn}"}
+                        else:
+                            result = {"status": "error", "message": "build_number is required"}
+
+                    elif tool == "jenkins" and action == "get_status":
+                        jn = params.get("job_name", "test-pipeline")
+                        bn = params.get("build_number")
+                        if bn:
+                            resp = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['jenkins']}/status/{jn}/{bn}", timeout=30)
+                            result = resp.json() if resp.status_code == 200 else {"status": "error"}
+                            context["jenkins_status"] = result
+                        else:
+                            result = {"status": "error", "message": "build_number is required"}
+
+                    elif tool == "jenkins" and action in ["last_failed", "lastfailed"]:
+                        jn = params.get("job_name", "test-pipeline")
+                        resp = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['jenkins']}/lastfailed/{jn}", timeout=30)
+                        result = resp.json() if resp.status_code == 200 else {"status": "error"}
+                        context["jenkins_last_failed"] = result
+                        # Also fetch logs for the failed build
+                        if result.get("build_number"):
+                            try:
+                                log_resp = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['jenkins']}/logs/{jn}/{result['build_number']}", timeout=30)
+                                if log_resp.status_code == 200:
+                                    result["logs_snippet"] = log_resp.text[:3000]
+                                    context["jenkins_logs"] = log_resp.text[:3000]
+                            except Exception:
+                                pass
+
+                    elif tool == "jenkins" and action in ["last_build", "lastbuild"]:
+                        jn = params.get("job_name", "test-pipeline")
+                        # Get last build by triggering status for latest
+                        resp = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['jenkins']}/lastfailed/{jn}", timeout=30)
+                        result = resp.json() if resp.status_code == 200 else {"status": "no_builds_found"}
+                        context["jenkins_last_build"] = result
+
                     elif tool == "jenkins" and action == "trigger":
                         jn = params.get("job_name", "test-pipeline")
                         
@@ -3046,7 +3114,7 @@ Generate a helpful, well-formatted reply using markdown. Rules:
 - IMPORTANT: Do NOT re-generate or include any mermaid diagram code — it will be appended automatically.
 """
             try:
-                reply_response = await gemini_with_retry(active_model, reply_prompt, retries=3)
+                reply_response = await gemini_with_retry(gemini_flash, reply_prompt, retries=3, timeout=20)
                 reply_text = reply_response.text.strip()
             except Exception as e:
                 logger.error(f"Reply generation failed: {e}")
@@ -3065,6 +3133,15 @@ Generate a helpful, well-formatted reply using markdown. Rules:
                     fallback_parts.append(f"- **File Content Retrieved**")
                 if "jenkins_trigger" in context:
                     fallback_parts.append(f"- **Jenkins Build Triggered**")
+                if "jenkins_logs" in context:
+                    fallback_parts.append(f"- **Jenkins Logs:**\n```\n{context['jenkins_logs'][:2000]}\n```")
+                if "jenkins_last_failed" in context:
+                    jlf = context["jenkins_last_failed"]
+                    fallback_parts.append(f"- **Last Failed Build:** #{jlf.get('build_number', 'N/A')} — {jlf.get('result', 'FAILURE')}")
+                if "jenkins_status" in context:
+                    fallback_parts.append(f"- **Build Status:** {json.dumps(context['jenkins_status'])}")
+                if "log_analysis" in context:
+                    fallback_parts.append(f"- **Log Analysis:**\n{context['log_analysis'][:2000]}")
                 if len(fallback_parts) == 1:
                     fallback_parts.append(f"```json\n{json.dumps(reply_context, indent=2)[:1500]}\n```")
                 fallback_parts.append(f"\n> ⚠️ *The AI summary couldn't be generated due to high demand. The raw data is shown above.*")

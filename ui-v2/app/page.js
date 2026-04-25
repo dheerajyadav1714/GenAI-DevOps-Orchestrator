@@ -130,7 +130,7 @@ export default function Home() {
       let completed = false;
       let previousStepCount = 0;
       const pollStartTime = Date.now();
-      const MAX_POLL_TIMEOUT = 90000; // 90 seconds safety timeout
+      const MAX_POLL_TIMEOUT = 120000; // 120 seconds safety timeout
       let pollErrors = 0;
 
       while (!completed) {
