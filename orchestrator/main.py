@@ -706,6 +706,7 @@ Available tools:
 - pipeline.generate: {{"repo": "owner/repo"}}  (analyze repo structure and auto-generate a Jenkinsfile CI/CD pipeline)
 - chaos.inject: {{"repo": "owner/repo", "job_name": "test-pipeline"}}  (inject a random bug for chaos engineering demo, then trigger the pipeline to test self-healing)
 - release_notes.generate: {{"repo": "owner/repo", "version": "v1.2.0"}}  (auto-generate release notes from merged PRs and Jira tickets, publish to Confluence and notify Slack)
+- confluence.search: {{"query": "search term"}}  (Search the Confluence Knowledge Base and Wiki for troubleshooting guides, articles, and documentation)
 - terraform.provision: {{"project_name": "my-app", "repo": "owner/repo"}}  (zero-touch provisioning: generates Terraform IAC files for a given stack, pushes to a new branch, and creates a PR)
 - terraform.remediate: {{"repo": "owner/repo", "error_log": "IAM Permission Denied..."}}  (diagnose and auto-fix Terraform infrastructure bugs like missing IAM bindings)
 - finops.optimize: {{"repo": "owner/repo", "file_path": "kubernetes/deployment.yaml"}}  (analyze infra/kubernetes files, right-size the limits to save costs, and open a PR)
@@ -1671,6 +1672,22 @@ End with a deployment note."""
                             logger.error(f"Runbooks query failed: {rb_err}")
                             context["runbooks"] = []
                             result = {"runbooks": []}
+
+                    # ---------- CONFLUENCE ----------
+                    elif tool == "confluence" and action == "search":
+                        try:
+                            query = params.get("query", "")
+                            c_resp = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['confluence']}/search", params={"query": query}, timeout=15)
+                            if c_resp.status_code == 200:
+                                search_results = c_resp.json()
+                                context["confluence_results"] = search_results
+                                result = {"results": search_results, "count": len(search_results), "message": f"Found {len(search_results)} articles in Confluence for query '{query}'"}
+                            else:
+                                logger.error(f"Confluence search failed: {c_resp.text}")
+                                result = {"error": f"Failed to search Confluence: {c_resp.text}"}
+                        except Exception as e:
+                            logger.error(f"Confluence search exception: {e}")
+                            result = {"error": str(e)}
 
                     # ---------- METRICS ----------
                     elif tool == "metrics" and action == "dora":
