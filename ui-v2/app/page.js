@@ -129,12 +129,27 @@ export default function Home() {
 
       let completed = false;
       let previousStepCount = 0;
+      const pollStartTime = Date.now();
+      const MAX_POLL_TIMEOUT = 90000; // 90 seconds safety timeout
+      let pollErrors = 0;
 
       while (!completed) {
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 1500));
+
+        // Safety timeout: if polling exceeds 90s, stop and show a timeout message
+        if (Date.now() - pollStartTime > MAX_POLL_TIMEOUT) {
+          setMessages((prev) => [...prev, {
+            role: "assistant",
+            content: "⏱️ The request is taking longer than expected. The workflow is still processing in the background. Please wait a moment and refresh the chat to see the response.",
+          }]);
+          setLiveSteps([]);
+          break;
+        }
+
         try {
           const statusRes = await fetch(`${API_BASE}/workflow/${workflow_id}`);
           const statusData = await statusRes.json();
+          pollErrors = 0; // Reset on success
 
           // Parse the plan to show incremental live steps
           let plan = [];
@@ -226,7 +241,17 @@ export default function Home() {
             setLiveSteps([]);
             fetchMetrics();
           }
-        } catch (pollErr) { /* retry */ }
+        } catch (pollErr) {
+          pollErrors++;
+          if (pollErrors >= 5) {
+            setMessages((prev) => [...prev, {
+              role: "assistant",
+              content: "⚠️ Connection to the server was lost. The workflow may still be processing. Please refresh the page to see results.",
+            }]);
+            setLiveSteps([]);
+            break;
+          }
+        }
       }
     } catch (err) {
       setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${err.message}` }]);
