@@ -223,6 +223,27 @@ def mcp_request(method, url, retries=3, **kwargs):
                 raise
 
 
+# ========== GEMINI RETRY HELPER (429 backoff) ==========
+async def gemini_with_retry(model, prompt, retries=3):
+    """Call Gemini with exponential backoff for 429 rate limit errors"""
+    for attempt in range(retries):
+        try:
+            resp = await asyncio.to_thread(model.generate_content, prompt)
+            return resp
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str and attempt < retries - 1:
+                wait_time = 2 ** (attempt + 1)  # 2s, 4s, 8s
+                logger.warning(f"Gemini 429 rate limit hit, retrying in {wait_time}s (attempt {attempt+1}/{retries})")
+                await asyncio.sleep(wait_time)
+            elif attempt < retries - 1 and ("500" in err_str or "503" in err_str or "connection" in err_str.lower()):
+                wait_time = 2 ** (attempt + 1)
+                logger.warning(f"Gemini transient error, retrying in {wait_time}s: {err_str[:100]}")
+                await asyncio.sleep(wait_time)
+            else:
+                raise
+
+
 # ========== ANALYZE FAILURE ==========
 def analyze_failure(logs, past_incidents=""):
     """Use Gemini to analyze Jenkins failure logs with confidence score"""
@@ -641,9 +662,10 @@ async def execute_workflow_async(workflow_id, user_request, override_steps=None)
 Available tools:
 - jira.get_issue: {{"key": "SCRUM-11"}}
 - jira.search_issues: {{"jql": "project = SCRUM AND status = 'To Do' ORDER BY created DESC"}}
-- jira.create_issue: {{"project_key": "SCRUM", "summary": "Fix login bug", "description": "Details..."}}
+- jira.create_issue: {{"project_key": "SCRUM", "summary": "Fix login bug", "description": "Details...", "issue_type": "Task"}}
 - jira.update_issue: {{"key": "SCRUM-11", "status": "In Progress"}} or {{"key": "SCRUM-11", "comment": "Working on it"}}
-- jira.assign_to_sprint: {{"key": "SCRUM-11", "sprint_name": "Sprint 1"}}
+- jira.list_sprints: {{"project_key": "SCRUM"}}  (lists all active/future sprints for a project)
+- jira.assign_to_sprint: {{"key": "SCRUM-11", "sprint_name": "SCRUM Sprint 1"}}
 - code.generate_fix: {{"issue_key": "SCRUM-11", "repo": "owner/repo", "file_path": "src/bug.py"}}
 - github.read: {{"repo": "owner/repo", "path": "README.md", "branch": "main"}}
 - github.list_contents: {{"repo": "owner/repo", "path": "", "branch": "main"}}
@@ -685,10 +707,27 @@ Jira JQL examples:
 - All tickets: "project = SCRUM ORDER BY created DESC"
 - Open/To Do: "project = SCRUM AND status = 'To Do' ORDER BY created DESC"
 - In Progress: "project = SCRUM AND status = 'In Progress'"
+- In Review: "project = SCRUM AND status = 'In Review'"
 - Done/Closed: "project = SCRUM AND status = 'Done'"
 - My tickets: "project = SCRUM AND assignee = currentUser()"
 - Bugs only: "project = SCRUM AND issuetype = Bug"
+- Stories only: "project = SCRUM AND issuetype = Story"
+- Tasks only: "project = SCRUM AND issuetype = Task"
+- Epics only: "project = SCRUM AND issuetype = Epic"
+- Subtasks: "project = SCRUM AND issuetype = Sub-task"
 - Recent: "project = SCRUM AND created >= -7d ORDER BY created DESC"
+- Current sprint: "project = SCRUM AND sprint in openSprints()"
+
+Issue type mapping (use EXACT Jira type names in JQL):
+- "bug" / "bugs" -> issuetype = Bug
+- "story" / "stories" / "user story" -> issuetype = Story
+- "task" / "tasks" -> issuetype = Task
+- "epic" / "epics" -> issuetype = Epic
+- "subtask" / "sub-task" -> issuetype = Sub-task
+
+Sprint rules:
+- If user says "current sprint" or "active sprint", use jira.list_sprints first to discover the actual sprint name, then use jira.assign_to_sprint with the discovered name.
+- NEVER guess sprint names. Always use jira.list_sprints to discover them first.
 
 Default repo: dheerajyadav1714/ci_cd
 Default Jenkins job: test-pipeline
@@ -711,13 +750,14 @@ RULES:
 User request: "{user_request}"
 """
             try:
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(active_model.generate_content, plan_prompt),
-                    timeout=10.0
-                )
-            except (Exception, asyncio.TimeoutError) as e:
-                logger.warning(f"active_model failed or timed out ({e}), falling back to gemini_flash for intent parsing")
-                response = await asyncio.to_thread(gemini_flash.generate_content, plan_prompt)
+                response = await gemini_with_retry(active_model, plan_prompt, retries=3)
+            except Exception as e:
+                logger.warning(f"active_model failed ({e}), falling back to gemini_flash for intent parsing")
+                try:
+                    response = await gemini_with_retry(gemini_flash, plan_prompt, retries=2)
+                except Exception as e2:
+                    logger.error(f"All models failed for planning: {e2}")
+                    return {"reply": "I'm experiencing high demand right now. Please try again in a few seconds.", "steps": [], "suggestions": ["Try again"]}
             raw = response.text.strip()
             logger.info(f"Gemini plan output: {raw}")
 
@@ -786,7 +826,7 @@ User request: "{user_request}"
 
                     elif tool == "jira" and action == "search_issues":
                         jql = params.get("jql", "project = SCRUM ORDER BY created DESC")
-                        resp = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['jira']}/search", params={"jql": jql, "maxResults": 50}, timeout=30)
+                        resp = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['jira']}/search", params={"jql": jql, "maxResults": 200}, timeout=30)
                         result = resp.json() if resp.status_code == 200 else []
                         if isinstance(result, list):
                             md = "| Key | Summary | Status | Assignee |\n| --- | --- | --- | --- |\n"
@@ -804,12 +844,65 @@ User request: "{user_request}"
                         context["jira_created"] = result
 
                     elif tool == "jira" and action in ["update_issue", "update"]:
-                        resp = requests.post(f"{MCP_SERVERS['jira']}/update", json=params, timeout=30)
+                        resp = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['jira']}/update", json=params, timeout=30)
                         result = resp.json()
                         context["jira_updated"] = result
 
+                    elif tool == "jira" and action == "list_sprints":
+                        ls_project = params.get("project_key", "SCRUM")
+                        ls_jql = f"project = {ls_project} AND sprint in openSprints() ORDER BY created DESC"
+                        ls_resp = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['jira']}/search", params={"jql": ls_jql, "maxResults": 20}, timeout=30)
+                        ls_data = ls_resp.json() if ls_resp.status_code == 200 else []
+                        # Extract sprint names from the ticket data
+                        sprint_names = set()
+                        if isinstance(ls_data, list):
+                            for ticket in ls_data:
+                                sprint_field = ticket.get("sprint", ticket.get("fields", {}).get("sprint", {}))
+                                if isinstance(sprint_field, dict) and sprint_field.get("name"):
+                                    sprint_names.add(sprint_field["name"])
+                                # Also check sprint array
+                                sprints_arr = ticket.get("sprints", ticket.get("fields", {}).get("sprints", []))
+                                if isinstance(sprints_arr, list):
+                                    for sp in sprints_arr:
+                                        if isinstance(sp, dict) and sp.get("name"):
+                                            sprint_names.add(sp["name"])
+                        if not sprint_names:
+                            # Fallback: try the board-based naming convention
+                            sprint_names = {f"{ls_project} Sprint 1"}
+                        result = {"sprints": list(sprint_names), "active_sprint": list(sprint_names)[0] if sprint_names else "Unknown"}
+                        context["jira_sprints"] = result
+                        logger.info(f"Discovered sprints: {sprint_names}")
+
                     elif tool == "jira" and action == "assign_to_sprint":
-                        resp = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['jira']}/issue/{params['key']}/sprint?sprint_name={params['sprint_name']}", timeout=30)
+                        sprint_name = params.get("sprint_name", "")
+                        # Auto-discover sprint if user said 'current sprint' or name looks generic
+                        if "current" in sprint_name.lower() or sprint_name.lower() in ["sprint 1", "sprint 2", "sprint 3"]:
+                            ls_project = params.get("key", "SCRUM").split("-")[0]
+                            ls_jql = f"project = {ls_project} AND sprint in openSprints() ORDER BY created DESC"
+                            try:
+                                ls_resp = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['jira']}/search", params={"jql": ls_jql, "maxResults": 5}, timeout=30)
+                                ls_data = ls_resp.json() if ls_resp.status_code == 200 else []
+                                discovered_names = set()
+                                if isinstance(ls_data, list):
+                                    for ticket in ls_data:
+                                        sprint_field = ticket.get("sprint", ticket.get("fields", {}).get("sprint", {}))
+                                        if isinstance(sprint_field, dict) and sprint_field.get("name"):
+                                            discovered_names.add(sprint_field["name"])
+                                        sprints_arr = ticket.get("sprints", ticket.get("fields", {}).get("sprints", []))
+                                        if isinstance(sprints_arr, list):
+                                            for sp in sprints_arr:
+                                                if isinstance(sp, dict) and sp.get("name"):
+                                                    discovered_names.add(sp["name"])
+                                if discovered_names:
+                                    sprint_name = list(discovered_names)[0]
+                                    logger.info(f"Auto-discovered sprint: {sprint_name}")
+                                else:
+                                    sprint_name = f"{ls_project} Sprint 1"
+                                    logger.info(f"No active sprint found, using fallback: {sprint_name}")
+                            except Exception as disc_err:
+                                logger.warning(f"Sprint discovery failed: {disc_err}, using fallback")
+                                sprint_name = f"{params.get('key', 'SCRUM').split('-')[0]} Sprint 1"
+                        resp = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['jira']}/issue/{params['key']}/sprint?sprint_name={sprint_name}", timeout=30)
                         result = resp.json()
                         context["jira_sprint"] = result
 
@@ -2953,11 +3046,29 @@ Generate a helpful, well-formatted reply using markdown. Rules:
 - IMPORTANT: Do NOT re-generate or include any mermaid diagram code — it will be appended automatically.
 """
             try:
-                reply_response = await asyncio.to_thread(active_model.generate_content, reply_prompt)
+                reply_response = await gemini_with_retry(active_model, reply_prompt, retries=3)
                 reply_text = reply_response.text.strip()
             except Exception as e:
                 logger.error(f"Reply generation failed: {e}")
-                reply_text = f"Actions completed. Raw data:\n```json\n{json.dumps(reply_context, indent=2)[:2000]}\n```"
+                # Build a user-friendly fallback from the context
+                fallback_parts = ["✅ **Actions completed successfully.** Here's a summary:\n"]
+                if "jira_created" in context:
+                    jc = context["jira_created"]
+                    fallback_parts.append(f"- **Jira Ticket Created:** `{jc.get('key', 'N/A')}` — {jc.get('summary', '')}")
+                if "jira_updated" in context:
+                    fallback_parts.append(f"- **Jira Ticket Updated:** `{context['jira_updated'].get('key', 'N/A')}`")
+                if "jira_search" in context:
+                    fallback_parts.append(f"- **Search Results:**\n{str(context['jira_search'])[:2000]}")
+                if "jira_sprint" in context:
+                    fallback_parts.append(f"- **Sprint Assignment:** {json.dumps(context['jira_sprint'])}")
+                if "github_read" in context:
+                    fallback_parts.append(f"- **File Content Retrieved**")
+                if "jenkins_trigger" in context:
+                    fallback_parts.append(f"- **Jenkins Build Triggered**")
+                if len(fallback_parts) == 1:
+                    fallback_parts.append(f"```json\n{json.dumps(reply_context, indent=2)[:1500]}\n```")
+                fallback_parts.append(f"\n> ⚠️ *The AI summary couldn't be generated due to high demand. The raw data is shown above.*")
+                reply_text = "\n".join(fallback_parts)
 
             # Append Mermaid diagram directly to reply text so UI renders it
             if has_migration_design and mermaid_to_append:
