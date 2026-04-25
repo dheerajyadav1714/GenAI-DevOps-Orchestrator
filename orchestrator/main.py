@@ -755,7 +755,7 @@ RULES:
 1. Output ONLY the JSON array.
 2. Do NOT include a reply step - the system will auto-generate the reply.
 3. For "list tickets" or "show tickets", use jira.search_issues with appropriate JQL.
-4. For "fix ticket X", use code.generate_fix.
+4. For "fix ticket X", use code.generate_fix ONLY if the ticket is explicitly a Bug. If the ticket is a Feature, Epic, or Story, DO NOT use code.generate_fix (as it only supports single-file bug fixes); instead, reply that multi-file feature implementation requires a developer.
 5. For Jenkins trigger, BRANCH parameter is optional (defaults to main).
 6. For "show logs" or "get logs for build X", use jenkins.get_logs with job_name and build_number.
 7. For "show last failed build" or "last failed", use jenkins.last_failed with job_name.
@@ -764,10 +764,10 @@ RULES:
 10. For "review PR", always use the actual GitHub PR number, NOT the Jenkins build number.
 11. For log/error/traceback analysis requests like "analyze this log", "what does this error mean", ALWAYS use log_analysis.analyze and put the ENTIRE log/error text in the 'log' field. Do NOT use any other tool for error analysis.
 12. CRITICAL: When using github.create_pr or jira.create_issue, you MUST provide a comprehensive, multi-line string for the `body` or `description` parameter. Never let it be blank or "None". Elaborate professionally on the fix or the issue.
-9. CRITICAL: When user asks to "fix a bug" or "fix the bug in X", you MUST use code.generate_fix as the ONLY step. code.generate_fix already handles everything internally (reads file, generates fix, creates branch, creates PR, notifies Slack). Do NOT add separate jira.create_issue or github.create_pr steps — they will cause duplicates.
-10. CRITICAL: Do NOT use placeholder references like PREVIOUS_STEP_RESULT or step1.key in params EXCEPT when specifically instructed to do so by a tool (e.g., migration.design's inventory_csv). Otherwise, use actual concrete values like "dheerajyadav1714/ci_cd".
-11. ZERO-TO-CLOUD MASTER WORKFLOW: If the user asks you to handle Agile tickets, provision infrastructure, generate pipelines, and optimize costs all at once, you MUST ONLY output `agile.generate_ticket` and `migration.design`. DO NOT output the provision, pipeline, or finops steps. The Orchestrator will automatically chain those downstream AFTER the user approves the architecture design!
-12. For architecture/design requests, ALWAYS use `migration.design`. If no file is provided to read, pass the user's requirements directly into the `inventory_csv` parameter.
+13. CRITICAL: When user asks to "fix a bug" or "fix the bug in X", you MUST use code.generate_fix as the ONLY step. code.generate_fix already handles everything internally (reads file, generates fix, creates branch, creates PR, notifies Slack). Do NOT add separate jira.create_issue or github.create_pr steps — they will cause duplicates.
+14. CRITICAL: Do NOT use placeholder references like PREVIOUS_STEP_RESULT or step1.key in params EXCEPT when specifically instructed to do so by a tool (e.g., migration.design's inventory_csv). Otherwise, use actual concrete values like "dheerajyadav1714/ci_cd".
+15. ZERO-TO-CLOUD MASTER WORKFLOW: If the user asks you to handle Agile tickets, provision infrastructure, generate pipelines, and optimize costs all at once, you MUST ONLY output `agile.generate_ticket` and `migration.design`. DO NOT output the provision, pipeline, or finops steps. The Orchestrator will automatically chain those downstream AFTER the user approves the architecture design!
+16. For architecture/design requests, ALWAYS use `migration.design`. If no file is provided to read, pass the user's requirements directly into the `inventory_csv` parameter.
 {conversation_context}
 User request: "{user_request}"
 """
@@ -3342,6 +3342,141 @@ async def debug_db():
         return {"error": str(e)}
 
 
+async def process_jenkins_failure(job_name, build_number):
+    """Robust, standalone self-healing loop for Jenkins failures."""
+    try:
+        logs_url = f"{MCP_SERVERS['jenkins']}/logs/{job_name}/{build_number}"
+        lr = await asyncio.to_thread(requests.get, logs_url, timeout=30)
+        logs = lr.json().get("logs", "") if lr.status_code == 200 else ""
+        
+        detected_repo = None
+        detected_file_path = None
+        for line in logs.splitlines():
+            if "DEVOPS_AUTO_FIX_REPO_NAME=" in line:
+                detected_repo = line.split("=", 1)[1].strip()
+            elif "DEVOPS_AUTO_FIX_FILE_PATH=" in line:
+                detected_file_path = line.split("=", 1)[1].strip()
+
+        async with AsyncSessionLocal() as session:
+            similar = await search_similar_incidents(session, logs[-1000:], limit=1)
+            
+            # Deepmind Confluence RAG implementation
+            conf_context = ""
+            try:
+                c_resp = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['confluence']}/search", params={"query": f"Fix Jenkins Build Failure {job_name}"}, timeout=10)
+                if c_resp.status_code == 200:
+                    res = c_resp.json().get("results", [])
+                    if res:
+                        c_snips = "\n".join([f"Source ({r['title']}):\n{r['content']}" for r in res])
+                        conf_context = f"\n\nInternal Confluence Wiki Results found:\n{c_snips}"
+            except Exception as crag_err:
+                logger.warning(f"Confluence RAG failed: {crag_err}")
+
+            past_incidents = conf_context
+            if similar:
+                past_incidents += "\n**Past similar incidents & solutions from AlloyDB RAG:**\n"
+                for sim in similar:
+                    past_incidents += f"- Fix Applied: {sim['fix']}\n"
+                    
+            analysis_text = await asyncio.to_thread(analyze_failure, logs, past_incidents)
+            confidence = parse_confidence(analysis_text)
+            severity = parse_severity(analysis_text)
+
+            fix_id = str(uuid.uuid4())
+            await session.execute(sql_text("INSERT INTO pending_fixes (id, fix_text, job_name, build_number, detected_repo, detected_file_path, created_at) VALUES (:id, :ft, :jn, :bn, :r, :fp, NOW())"),
+                {"id": fix_id, "ft": analysis_text, "jn": job_name, "bn": str(build_number), "r": detected_repo, "fp": detected_file_path})
+            await session.commit()
+
+            # Record incident for MTTR tracking
+            incident_id = str(uuid.uuid4())
+            try:
+                await session.execute(sql_text("INSERT INTO incidents (id, job_name, build_number, detected_at, status, confidence_score, severity, detected_repo, fix_id) VALUES (:id, :jn, :bn, NOW(), 'detected', :cs, :sev, :repo, :fid)"),
+                    {"id": incident_id, "jn": job_name, "bn": str(build_number), "cs": confidence, "sev": severity, "repo": detected_repo, "fid": fix_id})
+                await session.commit()
+            except Exception as inc_err:
+                logger.warning(f"Incident tracking: {inc_err}")
+                try: await session.rollback()
+                except: pass
+
+            # Confidence label
+            if confidence >= 90:
+                conf_label = "🟢 High confidence — Auto-fix triggered!"
+                slack_analysis = analysis_text[:2500]
+                await asyncio.to_thread(requests.post, f"{MCP_SERVERS['slack']}/send", json={
+                    "channel": SLACK_CHANNEL,
+                    "text": f"Build #{build_number} failed. {conf_label}\n\n{slack_analysis}",
+                }, timeout=30)
+                
+                # Run the fix workflow safely using the main event loop's threadpool executor
+                async def run_auto_fix():
+                    await asyncio.to_thread(run_fix_workflow, analysis_text, job_name, str(build_number), detected_repo, detected_file_path, True)
+                    # Update DB safely on the main loop
+                    try:
+                        async with AsyncSessionLocal() as db_s:
+                            actual_repo = detected_repo or JOB_REPO_MAP.get(job_name)
+                            await db_s.execute(sql_text("UPDATE incidents SET fixed_at = NOW(), status = 'fixed', mttr_seconds = EXTRACT(EPOCH FROM (NOW() - detected_at)) WHERE build_number = :bn AND detected_repo = :repo AND status = 'detected'"), {"bn": str(build_number), "repo": actual_repo})
+                            await db_s.commit()
+                            
+                            # Deepmind Autonomous Loop: Record incident for RAG and create Runbook!
+                            await store_incident(db_s, analysis_text, "Auto-merged AI fix.", repo=actual_repo)
+                            runbook = await generate_runbook(gemini_model, analysis_text, "Auto-merged AI fix", jira_key="AUTO")
+                            if runbook:
+                                rb_id = str(uuid.uuid4())
+                                await db_s.execute(sql_text("INSERT INTO runbooks (id, incident_id, jira_key, title, content, created_at) VALUES (:id, :iid, :jk, :t, :c, NOW())"),
+                                    {"id": rb_id, "iid": rb_id, "jk": "AUTO", "t": f"Runbook: Auto-fix {build_number}", "c": runbook})
+                                await db_s.commit()
+                                await asyncio.to_thread(requests.post, f"{MCP_SERVERS['slack']}/send", json={"text": f"Knowledge learned! Runbook automatically generated for Build #{build_number}.", "blocks": [{"type": "header", "text": {"type": "plain_text", "text": f"📝 Autonomous Runbook: Build #{build_number}"}}, {"type": "section", "text": {"type": "mrkdwn", "text": runbook[:2500]}}]}, timeout=30)
+                                
+                                # Deepmind Hackathon Integration: Confluence Wiki
+                                try:
+                                    conf_resp = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['confluence']}/pages", json={
+                                        "space": "DEVOPS",
+                                        "title": f"Troubleshooting Guide: Build #{build_number}",
+                                        "content": runbook
+                                    }, timeout=30)
+                                    if conf_resp.status_code == 200:
+                                        conf_url = conf_resp.json().get('url', '')
+                                        if conf_url:
+                                            await asyncio.to_thread(requests.post, f"{MCP_SERVERS['slack']}/send", json={"text": f"📘 Live Confluence Document created successfully!\nRead the full troubleshooting guide here: {conf_url}"}, timeout=30)
+                                    else:
+                                        await asyncio.to_thread(requests.post, f"{MCP_SERVERS['slack']}/send", json={"text": f"⚠️ Confluence sync failed (HTTP {conf_resp.status_code}). Please ensure you have created a Confluence space with the Space Key `DEVOPS` in your Atlassian account."}, timeout=30)
+                                except Exception as conf_err:
+                                    logger.warning(f"Confluence integration skipped/failed: {conf_err}")
+
+                                # Deepmind Hackathon Integration: Calendar Post-Mortem
+                                try:
+                                    from datetime import datetime, timedelta
+                                    pm_time = datetime.utcnow() + timedelta(days=1)
+                                    start_str = pm_time.strftime("%Y-%m-%dT04:30:00Z")
+                                    end_str = pm_time.strftime("%Y-%m-%dT05:00:00Z")
+                                    cal_resp = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['calendar']}/create-event", json={
+                                        "summary": f"Post-Mortem: Jenkins Build #{build_number}",
+                                        "description": f"Autonomous Fix detected. Review the fix and Runbook.\n\n{runbook[:500]}...",
+                                        "start_time": start_str,
+                                        "end_time": end_str
+                                    }, timeout=30)
+                                    if cal_resp.status_code == 200:
+                                        cal_link = cal_resp.json().get('html_link', '')
+                                        link_msg = f"\nEvent Link: {cal_link}" if cal_link else ""
+                                        await asyncio.to_thread(requests.post, f"{MCP_SERVERS['slack']}/send", json={"text": f"📅 Notice: A Post-Mortem sync for Build #{build_number} has been autonomously scheduled on the Calendar for tomorrow at 10 AM IST.{link_msg}"}, timeout=30)
+                                    else:
+                                        logger.warning(f"Calendar event failed: {cal_resp.text}")
+                                except Exception as cal_err:
+                                    logger.warning(f"Calendar post-mortem error: {cal_err}")
+                    except Exception as mttr_e:
+                        logger.warning(f"Auto-fix MTTR update failed: {mttr_e}")
+                
+                asyncio.create_task(run_auto_fix())
+            else:
+                conf_label = f"🟡 Low confidence ({confidence}%). Review required."
+                slack_analysis = analysis_text[:2500]
+                await asyncio.to_thread(requests.post, f"{MCP_SERVERS['slack']}/send", json={
+                    "channel": SLACK_CHANNEL,
+                    "text": f"Build #{build_number} failed. {conf_label}\n\n{slack_analysis}",
+                }, timeout=30)
+    except Exception as e:
+        logger.error(f"process_jenkins_failure error: {e}")
+
 # ========== WEBHOOK: Jenkins Auto-Detection ==========
 @app.post("/webhook/jenkins")
 async def jenkins_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -3367,13 +3502,13 @@ async def jenkins_webhook(request: Request, background_tasks: BackgroundTasks):
         logger.info(f"Webhook: {job_name} #{build_number} -> {build_status}")
 
         if build_status.upper() in ["FAILURE", "FAILED"]:
-            # Trigger the full analysis workflow
+            # Trigger the standalone self-healing loop
             background_tasks.add_task(
-                execute_workflow_async,
-                str(uuid.uuid4()),
-                f"Jenkins build {job_name} #{build_number} failed. Analyze the failure, notify slack, and prepare a fix."
+                process_jenkins_failure,
+                job_name,
+                build_number
             )
-            return {"status": "processing", "message": f"Analyzing failure for {job_name} #{build_number}"}
+            return {"status": "processing", "message": f"Analyzing failure and auto-fixing {job_name} #{build_number}"}
 
         return {"status": "ok", "message": f"Build {build_status} — no action needed"}
     except Exception as e:
