@@ -1629,14 +1629,31 @@ End with a deployment note."""
                         # Step 5: Publish to Confluence
                         conf_published = False
                         try:
-                            conf_resp = requests.post(f"{MCP_SERVERS['confluence']}/pages", json={
+                            import markdown
+                            html_content = markdown.markdown(release_notes_text, extensions=['extra', 'nl2br'])
+                            
+                            base_title = f"Release Notes — {rn_version} ({rn_repo.split('/')[-1]})"
+                            conf_resp = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['confluence']}/pages", json={
                                 "space": "DEVOPS",
-                                "title": f"Release Notes — {rn_version} ({rn_repo.split('/')[-1]})",
-                                "content": release_notes_text
+                                "title": base_title,
+                                "content": html_content
                             }, timeout=30)
+                            
+                            # If page title collision (400), retry with timestamp
+                            if conf_resp.status_code != 200:
+                                import time
+                                retry_title = f"{base_title} - {int(time.time())}"
+                                conf_resp = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['confluence']}/pages", json={
+                                    "space": "DEVOPS",
+                                    "title": retry_title,
+                                    "content": html_content
+                                }, timeout=30)
+
                             if conf_resp.status_code == 200:
                                 conf_published = True
                                 context["confluence_release_notes"] = conf_resp.json()
+                            else:
+                                logger.warning(f"Release notes Confluence publish failed: {conf_resp.text}")
                         except Exception as ce:
                             logger.warning(f"Release notes Confluence publish failed: {ce}")
 
@@ -2908,10 +2925,12 @@ Format as clean Markdown suitable for a README.md or docs site."""
                         # 5. Publish to Confluence
                         conf_published = False
                         try:
-                            conf_resp = requests.post(f"{MCP_SERVERS['confluence']}/pages", json={
+                            import markdown
+                            html_docs = markdown.markdown(docs_content, extensions=['extra', 'nl2br', 'fenced_code', 'tables'])
+                            conf_resp = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['confluence']}/pages", json={
                                 "space": "DEVOPS",
                                 "title": f"{doc_type} Documentation — {doc_repo.split('/')[-1]} — {str(uuid.uuid4())[:6]}",
-                                "content": docs_content
+                                "content": html_docs
                             }, timeout=30)
                             if conf_resp.status_code == 200:
                                 conf_published = True
@@ -3001,10 +3020,12 @@ Be thorough and professional. Use the actual data provided to construct a realis
                         # 5. Publish to Confluence
                         pm_conf = False
                         try:
-                            conf_resp = requests.post(f"{MCP_SERVERS['confluence']}/pages", json={
+                            import markdown
+                            html_pm = markdown.markdown(postmortem_text, extensions=['extra', 'nl2br', 'fenced_code', 'tables'])
+                            conf_resp = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['confluence']}/pages", json={
                                 "space": "DEVOPS",
                                 "title": f"Postmortem — {pm_service} — {str(uuid.uuid4())[:6]}",
-                                "content": postmortem_text
+                                "content": html_pm
                             }, timeout=30)
                             if conf_resp.status_code == 200:
                                 pm_conf = True
