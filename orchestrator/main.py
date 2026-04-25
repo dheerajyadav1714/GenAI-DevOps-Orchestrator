@@ -938,6 +938,13 @@ User request: "{user_request}"
                             ir = await asyncio.to_thread(requests.get, f"{MCP_SERVERS['jira']}/issue/{issue_key}", timeout=30)
                             if ir.status_code == 200:
                                 issue_data = ir.json()
+                                issue_type = issue_data.get("fields", {}).get("issuetype", {}).get("name", issue_data.get("issueType", ""))
+                                if issue_type.lower() in ["epic", "story", "feature"]:
+                                    context["code_gen_error"] = f"Cannot auto-fix a {issue_type} ticket. This requires a human developer to build the feature."
+                                    result = {"error": context["code_gen_error"]}
+                                    step_results.append(result)
+                                    steps[idx]["result"] = result
+                                    continue
                                 desc = str(issue_data.get("description", ""))
                                 context["jira_issue"] = issue_data
                         else:
