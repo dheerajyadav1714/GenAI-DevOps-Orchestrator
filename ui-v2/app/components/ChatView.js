@@ -201,9 +201,22 @@ const markdownComponents = {
 };
 
 // ─── Main ChatView ───────────────────────────────────────────────────────────
-export default function ChatView({ activeAgent, messages, isLoading, onSendMessage, onClearChat, onApproveAction, onChaosInject }) {
+export default function ChatView({ activeAgent, messages, isLoading, liveSteps = [], onSendMessage, onClearChat, onApproveAction, onChaosInject }) {
   const [input, setInput] = useState('');
   const scrollRef = useRef(null);
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const timerRef = useRef(null);
+
+  // Timer for thinking duration
+  useEffect(() => {
+    if (isLoading) {
+      setElapsedTime(0);
+      timerRef.current = setInterval(() => setElapsedTime(t => t + 1), 1000);
+    } else {
+      clearInterval(timerRef.current);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [isLoading]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -467,23 +480,99 @@ export default function ChatView({ activeAgent, messages, isLoading, onSendMessa
             );
           })}
           
-          {/* Loading indicator */}
+          {/* Animated Thinking Indicator */}
           {isLoading && (
             <div className="flex gap-3 w-full">
               <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 border border-primary/20 mt-1">
                 <span className="material-symbols-outlined text-primary text-[14px] animate-pulse" style={{ fontVariationSettings: "'FILL' 1" }}>smart_toy</span>
               </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider px-1">
-                  {activeAgent?.name || 'DevOps AI'}
-                </span>
-                <div className="bg-surface-container border border-outline-variant/20 px-5 py-4 rounded-2xl rounded-tl-sm shadow-sm flex items-center gap-3">
-                  <div className="flex gap-1">
-                    <span className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                    <span className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                    <span className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '300ms' }}></span>
+              <div className="flex flex-col gap-1 flex-1 max-w-lg">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
+                    {activeAgent?.name || 'DevOps AI'}
+                  </span>
+                  <span className="text-[10px] text-on-surface-variant/60 font-mono tabular-nums">
+                    {elapsedTime}s
+                  </span>
+                </div>
+                <div className="bg-surface-container border border-outline-variant/20 px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm">
+                  {/* Step-by-step progress */}
+                  <div className="flex flex-col gap-2">
+                    {liveSteps.length === 0 || (liveSteps.length === 1 && liveSteps[0].action === 'Planning') ? (
+                      <div className="flex items-center gap-2.5">
+                        <div className="relative w-4 h-4">
+                          <div className="absolute inset-0 rounded-full border-2 border-primary/30"></div>
+                          <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin"></div>
+                        </div>
+                        <span className="text-xs text-on-surface-variant font-medium">Analyzing request and planning steps...</span>
+                      </div>
+                    ) : (
+                      liveSteps.filter(s => s.tool !== 'reply').map((step, i) => {
+                        const toolLabels = {
+                          jira: '🎫 Jira', github: '🐙 GitHub', jenkins: '🔨 Jenkins',
+                          slack: '📢 Slack', calendar: '📅 Calendar', confluence: '📝 Confluence',
+                          code: '🧬 Code Gen', rag: '🧠 RAG Search', database: '💾 Database',
+                          migration: '☁️ Architecture', pipeline: '🔧 Pipeline',
+                          testing: '🧪 Tests', security: '🛡️ Security', finops: '💰 FinOps',
+                          terraform: '🏗️ Terraform', chaos: '🌀 Chaos', sre: '🚨 SRE',
+                          agile: '📊 Agile', gcp: '🌐 GCP', docs: '📚 Docs',
+                          deployment: '🚀 Deploy', log_analysis: '🔍 Log Analysis',
+                          release_notes: '📦 Release', metrics: '📈 Metrics',
+                        };
+                        const actionLabels = {
+                          search_issues: 'Searching tickets', get_issue: 'Fetching ticket details',
+                          create_issue: 'Creating ticket', update_issue: 'Updating ticket',
+                          assign_to_sprint: 'Assigning to sprint', list_sprints: 'Finding sprints',
+                          read: 'Reading file', list_contents: 'Listing files',
+                          list_branches: 'Listing branches', list_prs: 'Listing pull requests',
+                          create_pr: 'Creating pull request', review_pr: 'Reviewing code',
+                          commit: 'Committing code', merge_pr: 'Merging PR',
+                          trigger: 'Triggering build', send: 'Sending notification',
+                          generate_fix: 'Generating code fix', analyze: 'Analyzing logs',
+                          search: 'Searching knowledge base', query: 'Querying database',
+                          generate: 'Generating content', design: 'Designing architecture',
+                          optimize: 'Optimizing resources', scan_dependencies: 'Scanning security',
+                          sprint_health: 'Analyzing sprint', explore: 'Exploring infrastructure',
+                          inject: 'Injecting chaos', postmortem: 'Generating postmortem',
+                          predict_risk: 'Assessing risk', dora: 'Calculating metrics',
+                          provision: 'Provisioning infrastructure', remediate: 'Fixing infrastructure',
+                          create_event: 'Creating calendar event', generate_ticket: 'Generating story',
+                          runbooks: 'Searching runbooks',
+                        };
+                        const isLast = i === liveSteps.filter(s => s.tool !== 'reply').length - 1;
+                        const hasResult = step.result != null;
+                        const label = toolLabels[step.tool] || `🔧 ${step.tool}`;
+                        const actionLabel = actionLabels[step.action] || step.action;
+                        return (
+                          <div key={i} className="flex items-center gap-2.5">
+                            {hasResult ? (
+                              <span className="text-emerald-400 text-sm">✓</span>
+                            ) : isLast ? (
+                              <div className="relative w-4 h-4">
+                                <div className="absolute inset-0 rounded-full border-2 border-primary/30"></div>
+                                <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin"></div>
+                              </div>
+                            ) : (
+                              <span className="text-emerald-400 text-sm">✓</span>
+                            )}
+                            <span className={`text-xs font-medium ${hasResult || !isLast ? 'text-on-surface-variant/50' : 'text-on-surface-variant'}`}>
+                              {label} — {actionLabel}
+                            </span>
+                          </div>
+                        );
+                      })
+                    )}
+                    {/* Generating response indicator after tool steps are done */}
+                    {liveSteps.length > 1 && liveSteps.filter(s => s.tool !== 'reply').every(s => s.result != null) && (
+                      <div className="flex items-center gap-2.5">
+                        <div className="relative w-4 h-4">
+                          <div className="absolute inset-0 rounded-full border-2 border-primary/30"></div>
+                          <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin"></div>
+                        </div>
+                        <span className="text-xs text-on-surface-variant font-medium">Generating response...</span>
+                      </div>
+                    )}
                   </div>
-                  <span className="text-xs text-on-surface-variant font-medium">Thinking...</span>
                 </div>
               </div>
             </div>

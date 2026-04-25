@@ -55,7 +55,7 @@ export default function Home() {
 
   async function fetchMessages() {
     try {
-      const res = await fetch(`${API_BASE}/messages?user_id=ui_user&limit=50`);
+      const res = await fetch(`${API_BASE}/messages?user_id=ui_user&limit=30`);
       if (res.ok) {
         const data = await res.json();
         // Backend returns { messages: [...] }
@@ -444,6 +444,7 @@ export default function Home() {
                 activeAgent={activeAgent} 
                 messages={messages} 
                 isLoading={isLoading} 
+                liveSteps={liveSteps}
                 onSendMessage={sendMessage}
                 onClearChat={clearMessages}
                 onApproveAction={handleApproveAction}

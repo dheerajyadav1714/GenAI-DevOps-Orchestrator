@@ -643,13 +643,13 @@ async def execute_workflow_async(workflow_id, user_request, override_steps=None)
                 async with AsyncSessionLocal() as ctx_session:
                     ctx_result = await ctx_session.execute(sql_text(
                         "SELECT role, content FROM chat_messages WHERE user_id='ui_user' "
-                        "ORDER BY created_at DESC LIMIT 10"
+                        "ORDER BY created_at DESC LIMIT 6"
                     ))
                     ctx_rows = ctx_result.fetchall()
                     if ctx_rows:
-                        recent_msgs = [{"role": r[0], "content": r[1][:400]} for r in reversed(ctx_rows)]
+                        recent_msgs = [{"role": r[0], "content": r[1][:300]} for r in reversed(ctx_rows)]
                         conversation_context = "\nRecent conversation history (use this for context on follow-up requests):\n"
-                        for msg in recent_msgs[-6:]:
+                        for msg in recent_msgs[-4:]:
                             conversation_context += f"- {msg['role'].upper()}: {msg['content']}\n"
                         conversation_context += "\nUse this context to understand references like 'that ticket', 'the PR', 'deploy it', etc.\n"
                         logger.info(f"Loaded {len(recent_msgs)} messages for conversation context")
