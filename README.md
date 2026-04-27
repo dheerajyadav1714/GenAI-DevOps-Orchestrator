@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ Aether AI — Autonomous DevOps Orchestrator
+# ⚡ D.A.M.I — DevOps Autonomous Multi-agent Intelligence
 
 ### *One Prompt. Entire Infrastructure. Zero Toil.*
 
@@ -10,14 +10,15 @@ An **AI-powered, multi-agent platform** that autonomously designs cloud architec
 [![Powered by Gemini](https://img.shields.io/badge/Powered%20by-Gemini%202.5-8E75B2?logo=google&logoColor=white)](https://deepmind.google/technologies/gemini/)
 [![Cloud Run](https://img.shields.io/badge/Deployed%20on-Cloud%20Run-4285F4?logo=google-cloud&logoColor=white)](https://cloud.google.com/run)
 [![MCP Architecture](https://img.shields.io/badge/Architecture-MCP%20Microservices-FF6F00)](https://modelcontextprotocol.io)
+[![D.A.M.I](https://img.shields.io/badge/Agent-D.A.M.I-00C853?style=flat&logo=robot&logoColor=white)](https://github.com/dheerajyadav1714/GenAI-DevOps-Orchestrator)
 
 </div>
 
 ---
 
-## 🧠 What is Aether AI?
+## 🧠 What is D.A.M.I?
 
-**Aether AI** is an autonomous DevOps orchestrator that replaces manual infrastructure workflows with **AI-driven, multi-agent collaboration**. Instead of writing Terraform by hand, configuring CI/CD pipelines manually, or triaging incidents at 3 AM — you simply describe what you need in plain English.
+**D.A.M.I** (**D**evOps **A**utonomous **M**ulti-agent **I**ntelligence) is an autonomous DevOps orchestrator that replaces manual infrastructure workflows with **AI-driven, multi-agent collaboration**. Instead of writing Terraform by hand, configuring CI/CD pipelines manually, or triaging incidents at 3 AM — you simply describe what you need in plain English.
 
 **The AI handles the rest — end to end.**
 
@@ -25,7 +26,7 @@ An **AI-powered, multi-agent platform** that autonomously designs cloud architec
 "Design a HIPAA-compliant GKE architecture on GCP with Cloud SQL and 99.99% availability"
 ```
 
-↓ Aether AI automatically:
+↓ D.A.M.I automatically:
 
 ✅ Runs a **multi-agent debate** (Architect → SecOps → FinOps) to design the optimal architecture  
 ✅ Generates a **Mermaid architecture diagram** with full network topology  
@@ -38,13 +39,13 @@ An **AI-powered, multi-agent platform** that autonomously designs cloud architec
 
 ---
 
-## 🏛️ Multi-Agent Architecture
+## 🏛️ D.A.M.I Multi-Agent Architecture
 
-Aether AI uses a **collaborative multi-agent system** where specialized AI personas debate and refine each design:
+D.A.M.I uses a **collaborative multi-agent system** where specialized AI personas debate and refine each design:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                        AETHER AI ORCHESTRATOR                          │
+│                         D.A.M.I ORCHESTRATOR                           │
 │                    (Gemini 2.5 Pro + Flash)                            │
 │                                                                        │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐ │
@@ -136,9 +137,9 @@ Aether AI uses a **collaborative multi-agent system** where specialized AI perso
 ## 📁 Repository Structure
 
 ```
-Aether-AI/
+D.A.M.I/
 │
-├── orchestrator/                  # 🧠 The AI Brain (~4,000 lines)
+├── orchestrator/                  # 🧠 D.A.M.I Brain (~4,000 lines)
 │   ├── main.py                   # Multi-agent orchestration, tool routing, Mermaid sanitization
 │   ├── Dockerfile
 │   └── requirements.txt
@@ -246,12 +247,12 @@ All services run on **Google Cloud Run** (serverless):
 ```bash
 # Deploy the Orchestrator
 cd orchestrator
-gcloud run deploy aether-orchestrator --source . \
+gcloud run deploy dami-orchestrator --source . \
     --region us-central1 --allow-unauthenticated
 
 # Deploy the UI
 cd ui-v2
-gcloud run deploy aether-ui --source . \
+gcloud run deploy dami-ui --source . \
     --region us-central1 --allow-unauthenticated
 
 # Deploy MCP Servers (repeat for each)
@@ -277,8 +278,8 @@ gcloud run deploy github-mcp --source . \
 
 <div align="center">
 
-**Built with ❤️ on Google Cloud Platform for the GenAI Hackathon**
+**D.A.M.I — Built with ❤️ on Google Cloud Platform for the GenAI Hackathon**
 
-*Aether AI — Because infrastructure shouldn't require a war room.*
+*Because infrastructure shouldn't require a war room.*
 
 </div>
