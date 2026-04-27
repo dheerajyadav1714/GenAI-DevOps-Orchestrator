@@ -42,7 +42,7 @@ export default function Sidebar({ onNewChat }) {
             <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix" alt="User" className="w-full h-full object-cover" />
           </div>
           <div className="flex flex-col overflow-hidden">
-            <span className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)" }}>DevOps AI</span>
+            <span className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)" }}>D.A.M.I</span>
             <div className="flex items-center gap-1.5">
               <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "var(--success)" }} />
               <span className="text-[10px] font-medium truncate" style={{ color: "var(--text-muted)" }}>

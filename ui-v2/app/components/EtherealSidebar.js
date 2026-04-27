@@ -122,13 +122,13 @@ export default function EtherealSidebar({ activeView, setActiveView, isDark, onT
                     className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-on-surface-variant hover:text-on-surface hover:bg-on-surface/5 transition-all text-left"
                   >
                     <span className="material-symbols-outlined text-[18px]">info</span>
-                    About DevOps AI
+                    About D.A.M.I
                   </button>
                 </div>
                 <div className="px-4 py-3 bg-surface-container border-t border-outline-variant/20">
                   <div className="flex items-center gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
-                    <span className="font-mono text-[9px] text-on-surface-variant tracking-widest uppercase">DevOps AI Engine v2.5</span>
+                    <span className="font-mono text-[9px] text-on-surface-variant tracking-widest uppercase">D.A.M.I Engine v2.5</span>
                   </div>
                 </div>
               </div>

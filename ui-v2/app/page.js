@@ -9,7 +9,7 @@ import MegaMenu from "./components/MegaMenu";
 import MetricsPanel from "./components/MetricsPanel";
 import SettingsPanel from "./components/SettingsPanel";
 
-const API_BASE = "https://devops-orchestrator-v2-688623456290.us-central1.run.app";
+const API_BASE = "https://dami-orchestrator-688623456290.us-central1.run.app";
 
 export default function Home() {
   const [activeView, setActiveView] = useState("DASHBOARD");
@@ -398,7 +398,7 @@ export default function Home() {
           <div className="flex items-center gap-4">
              <div className="flex flex-col">
                 <h1 className="font-['Inter'] font-black text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary-container tracking-tighter text-xl">
-                  DevOps AI
+                  D.A.M.I
                 </h1>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-mono font-bold tracking-[0.2em] uppercase opacity-50 text-on-surface">

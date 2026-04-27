@@ -4,8 +4,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata = {
-  title: "DevOps AI | Intelligent SRE Control Plane",
-  description: "AI-powered autonomous DevOps platform — self-healing CI/CD, intelligent pipeline generation, and real-time DORA metrics.",
+  title: "D.A.M.I | DevOps Autonomous Multi-agent Intelligence",
+  description: "D.A.M.I — AI-powered multi-agent platform for autonomous DevOps: self-healing CI/CD, cloud architecture design, and real-time DORA metrics. Built on Google Cloud.",
 };
 
 export default function RootLayout({ children }) {

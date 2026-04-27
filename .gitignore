@@ -41,9 +41,10 @@ token.json
 service_account.json
 genai-hackathon-*.json
 
-# Ignore all markdown docs for submission (keep only README)
+# Ignore all markdown docs for submission (keep only public-facing docs)
 *.md
 !README.md
+!AI_FEATURES.md
 
 # Doc files to ignore
 DEPLOYMENT_GUIDE*
