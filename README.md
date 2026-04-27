@@ -6,28 +6,13 @@
 
 An **AI-powered, multi-agent platform** that autonomously designs cloud architectures, provisions infrastructure via Terraform, self-heals CI/CD pipelines, and orchestrates across **9+ enterprise tools** — all from a single natural language interface.
 
-[![Live Demo](https://img.shields.io/badge/🚀%20Live%20Demo-dami--ui-00C853?style=for-the-badge)](https://dami-ui-688623456290.us-central1.run.app)
-
 [![Built on GCP](https://img.shields.io/badge/Built%20on-Google%20Cloud-4285F4?logo=google-cloud&logoColor=white)](https://cloud.google.com)
 [![Powered by Gemini](https://img.shields.io/badge/Powered%20by-Gemini%202.5-8E75B2?logo=google&logoColor=white)](https://deepmind.google/technologies/gemini/)
 [![Cloud Run](https://img.shields.io/badge/Deployed%20on-Cloud%20Run-4285F4?logo=google-cloud&logoColor=white)](https://cloud.google.com/run)
 [![MCP Architecture](https://img.shields.io/badge/Architecture-MCP%20Microservices-FF6F00)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Hackathon](https://img.shields.io/badge/Gen%20AI%20Academy-APAC%20Edition-E91E63)](https://hack2skill.com)
 
 </div>
-
----
-
-## 📋 Hackathon Submission
-
-| Requirement | Link |
-|:---|:---|
-| **Cloud Run Deployment** | [https://dami-ui-688623456290.us-central1.run.app](https://dami-ui-688623456290.us-central1.run.app) |
-| **GitHub Repository** | [https://github.com/dheerajyadav1714/D.A.M.I](https://github.com/dheerajyadav1714/D.A.M.I) |
-| **Demo Video** | [Coming Soon](#) |
-
-> **Problem Statement:** Build a multi-agent AI system that helps users manage tasks, schedules, and information by interacting with multiple tools and data sources.
 
 ---
 
@@ -65,18 +50,6 @@ An **AI-powered, multi-agent platform** that autonomously designs cloud architec
 ✅ Opens a **GitHub Pull Request** with the IaC  
 ✅ Creates a **Final Migration Runbook** in Confluence  
 ✅ Notifies the team on **Slack** at every stage  
-
----
-
-## 🏛️ How D.A.M.I Meets the Hackathon Criteria
-
-| Requirement | D.A.M.I Implementation |
-|:---|:---|
-| **Primary agent coordinating sub-agents** | Gemini 2.5 orchestrator coordinates 6 MCP sub-agents (Jenkins, GitHub, Jira, Slack, Calendar, Confluence) |
-| **Store and retrieve structured data from a database** | AlloyDB PostgreSQL stores workflows, incidents, chat history, DORA metrics + pgvector for RAG semantic search |
-| **Integrate multiple tools via MCP** | 6 independent MCP servers deployed as Cloud Run microservices |
-| **Handle multi-step workflows** | Two-Pass Architecture (Plan → Execute → Synthesize) with up to 15-step autonomous workflows |
-| **Deploy as an API-based system** | Full REST API with 10+ endpoints, deployed on Google Cloud Run |
 
 ---
 
@@ -119,43 +92,41 @@ An **AI-powered, multi-agent platform** that autonomously designs cloud architec
 
 ---
 
-## ✨ Feature Matrix
+## ✨ AI Features & Capabilities
+
+### 🧠 Core Intelligence
+- **Two-Pass Workflow Engine**: Eliminates hallucination by separating the "Planning" pass (AI reasoning) from the "Execution" pass (actual API calls).
+- **Smart Model Routing**: Automatically routes complex architectural tasks to Gemini 2.5 Pro, while using Gemini 2.5 Flash for speed-critical bug fixes.
+- **RAG Pipeline (Retrieval-Augmented Generation)**: Uses AlloyDB with `pgvector` to store 768-dimensional embeddings of all past incidents. The system natively searches its own memory and your Confluence wiki to solve new bugs based on historical context.
 
 ### 🏗️ Cloud Architecture & Provisioning
-
-| Feature | Description |
-|:--------|:------------|
-| **AI Architecture Design** | Describe requirements in plain English → get a full enterprise-grade GCP architecture |
-| **Multi-Agent Debate** | Principal Architect designs → SecOps hardens → FinOps optimizes — 3 AI agents collaborate |
-| **Mermaid Diagrams** | Auto-generated, color-coded architecture diagrams with network topology and CIDR ranges |
-| **CSV Inventory Migration** | Upload a CSV of on-prem servers → AI maps each workload to optimal GCP services |
-| **Terraform Generation** | Approved architectures auto-generate production-ready Terraform (VPC, GKE, Cloud SQL, IAM) |
-| **GitHub PR Creation** | Terraform code committed to a feature branch with a Pull Request opened automatically |
-| **Human-in-the-Loop** | Architectures require explicit human approval before any infrastructure is provisioned |
-| **Confluence Documentation** | Hierarchical documentation: Architecture Draft → Final Migration Runbook |
+- **AI Architecture Design**: Describe requirements in plain English ("telemedicine app for 20k users") → get a full enterprise-grade GCP architecture.
+- **Multi-Agent Debate**: Three AI personas collaborate on design: Principal Architect (designs), SecOps Reviewer (hardens), and FinOps Optimizer (reduces cost).
+- **Mermaid Diagrams**: Auto-generated, color-coded architecture diagrams with network topology and CIDR ranges.
+- **CSV Inventory Migration**: Upload a CSV of on-prem servers → AI maps each workload to optimal GCP services.
+- **Terraform Generation**: Approved architectures auto-generate production-ready Terraform (VPC, GKE, Cloud SQL, IAM).
+- **Zero-Touch Provisioning**: Creates GitHub PRs with the IaC, generates CI/CD pipelines, and publishes Migration Runbooks.
 
 ### 🛡️ Self-Healing CI/CD (Autonomous SRE)
+- **Autonomous Loop**: Detects Jenkins failures → diagnoses root cause → writes fix → creates PR → merges → restarts pipeline.
+- **AI Code Review**: Scans PRs for hardcoded secrets, SQL injection, XSS, path traversal, and code quality issues.
+- **Confidence-Based Merging**: High confidence fixes (≥90%) auto-merge; others generate Slack approval buttons for human review.
+- **Human-in-the-Loop**: Absolute control. No infrastructure is provisioned without explicit human approval via the UI or Slack.
+- **Auto Release Notes**: Fetches merged PRs + Jira tickets → synthesizes release notes → publishes to Confluence.
+- **Chaos Engineering**: Built-in chaos injection mode to demonstrate the self-healing loop in live environments.
 
-| Feature | Description |
-|:--------|:------------|
-| **Self-Healing Pipelines** | Detects Jenkins failures → diagnoses root cause → writes fix → creates PR → merges → restarts |
-| **RAG-Powered Analysis** | Semantic search across past incidents (pgvector) + Confluence runbooks for context-aware fixes |
-| **AI Code Review** | Reviews PRs for bugs, security vulnerabilities (secrets, SQL injection, XSS), and code quality |
-| **Confidence-Based Merging** | ≥ 90% confidence: auto-merge. < 90%: Slack approval buttons for human review |
-| **Auto Release Notes** | Fetches merged PRs + Jira tickets → synthesizes release notes → publishes to Confluence |
-| **DORA Metrics** | Live dashboard tracking Deployment Frequency, Lead Time, MTTR, and Change Failure Rate |
+### 📊 Operations & Analytics
+- **DORA Metrics Engine**: Live dashboard tracking Deployment Frequency, Lead Time, MTTR, and Change Failure Rate directly from database events.
+- **Natural Language to SQL**: Talk to your database. ("What's our build success rate for the last 7 days?")
+- **FinOps Optimization**: Analyzes Kubernetes manifests and generates PRs to right-size CPU/Memory limits based on best practices.
 
-### 🛠️ Developer Productivity
-
-| Feature | Description |
-|:--------|:------------|
-| **Natural Language Ops** | Talk to your infrastructure: *"Show me build success rate for the last 7 days"* |
-| **Jira Management** | Create, search (JQL), update tickets, assign to sprints — all via chat |
-| **GitHub Operations** | Read files, list branches/PRs, create branches, commit code, merge PRs |
-| **Slack Notifications** | Context-aware messages at every workflow stage with interactive buttons |
-| **Calendar Scheduling** | Auto-schedule post-mortem meetings and deployment reviews |
-| **Confluence Knowledge Search** | Query Wiki and vector store for past incidents and runbooks |
-| **Chaos Engineering** | One-click chaos injection — inject bugs, trigger pipeline, watch self-healing in action |
+### 🛠️ Tool Integrations (MCP Microservices)
+- **GitHub**: Read files, commit code, manage branches, create/merge PRs.
+- **Jenkins**: Trigger builds, stream logs, detect failures.
+- **Jira**: Create, update, assign, and search tickets (JQL).
+- **Slack**: Send context-aware notifications and interactive approval buttons.
+- **Confluence**: Query the wiki (RAG) and publish hierarchical runbooks.
+- **Calendar**: Auto-schedule post-mortem meetings and deployment reviews.
 
 ---
 
@@ -164,7 +135,6 @@ An **AI-powered, multi-agent platform** that autonomously designs cloud architec
 | Layer | Technology |
 |:------|:-----------|
 | **AI Engine** | Gemini 2.5 Pro (deep architecture reasoning) + Gemini 2.5 Flash (speed & fallback) |
-| **Smart Model Routing** | Complex tasks → Pro; routine tasks → Flash (automatic) |
 | **Embeddings** | Vertex AI `text-embedding-005` (768 dimensions) |
 | **Database** | AlloyDB PostgreSQL + `pgvector` for semantic search (RAG) |
 | **Compute** | Google Cloud Run (serverless, auto-scaling, 9 services) |
@@ -172,7 +142,6 @@ An **AI-powered, multi-agent platform** that autonomously designs cloud architec
 | **Secrets** | GCP Secret Manager (zero hardcoded credentials) |
 | **Frontend** | Next.js 15 (React) — glassmorphism UI with dark/light mode |
 | **Backend** | FastAPI (Python) — async, production-grade |
-| **CI/CD** | Jenkins on GCE + GitHub |
 | **Integrations** | 6 MCP microservices: Jenkins, GitHub, Jira, Slack, Calendar, Confluence |
 
 ---
@@ -212,12 +181,7 @@ D.A.M.I/
 │   ├── calendar-mcp/             # Google Calendar event creation
 │   └── confluence-mcp/           # Wiki pages (hierarchical) + CQL search (RAG)
 │
-├── DEPLOYMENT_GUIDE.md            # End-to-end deployment instructions
-├── AI_FEATURES.md                 # Comprehensive AI capabilities document
-├── DEMO_VIDEO_SCRIPT.md           # 3-minute hackathon demo script
-├── SHOWCASE_VIDEO_SCRIPT.md       # Full showcase video script (no time limit)
-├── LICENSE                        # MIT License with trademark protection
-└── README.md                      # ← You are here
+└── LICENSE                        # MIT License with trademark protection
 ```
 
 ---
@@ -234,7 +198,7 @@ D.A.M.I/
 
 ---
 
-## 🎬 Demo Scenarios
+## 🎬 Example Scenarios
 
 ### Scenario 1: Self-Healing Pipeline (Chaos Engineering)
 
@@ -296,71 +260,9 @@ User: "Fix ticket SCRUM-11 in the ci_cd repo, review the PR, and notify Slack"
 
 ---
 
-## 🚀 Deployment
-
-All services run on **Google Cloud Run** (serverless) across two GCP projects:
-
-| Project | Services |
-|:---|:---|
-| `gcp-experiments-490315` | D.A.M.I Orchestrator, D.A.M.I UI, AlloyDB |
-| `genai-hackathon-491712` | 6 MCP Servers (Jenkins, GitHub, Jira, Slack, Calendar, Confluence), Jenkins VM |
-
-```bash
-# Deploy the Orchestrator
-cd orchestrator
-gcloud run deploy dami-orchestrator --source . \
-    --region us-central1 --allow-unauthenticated \
-    --cpu=2 --memory=2Gi --timeout=600
-
-# Deploy the UI
-cd ui-v2
-gcloud run deploy dami-ui --source . \
-    --region us-central1 --allow-unauthenticated \
-    --cpu=2 --memory=2Gi --min-instances=1
-
-# Deploy MCP Servers (repeat for each)
-cd mcp-servers/github-mcp
-gcloud run deploy github-mcp --source . \
-    --region us-central1 --allow-unauthenticated
-```
-
-> 📘 For the complete step-by-step deployment guide, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)
-
----
-
-## 📊 System Metrics
-
-| Metric | Value |
-|:-------|:------|
-| **Orchestrator Lines of Code** | ~4,000 |
-| **MCP Microservices** | 6 (Jenkins, GitHub, Jira, Slack, Calendar, Confluence) |
-| **AI Agents** | 4 (Architect, SecOps, FinOps, Diagram Generator) |
-| **Integrated Tools** | 9+ (Jenkins, GitHub, Jira, Slack, Calendar, Confluence, Terraform, AlloyDB, Vertex AI) |
-| **Cloud Run Services** | 9 (Orchestrator + UI + 6 MCP + AlloyDB NL Query) |
-| **AI Models** | Gemini 2.5 Pro + Gemini 2.5 Flash (smart routing) |
-| **Vector Dimensions** | 768 (text-embedding-005) |
-| **Database Tables** | 8 (auto-created on startup) |
-| **Supported Prompts** | 59+ natural language commands |
-| **Deployment Model** | Fully serverless (Google Cloud Run) |
-
----
-
-## 📚 Documentation
-
-| Document | Description |
-|:---|:---|
-| [AI_FEATURES.md](AI_FEATURES.md) | Comprehensive AI capabilities and functionality |
-| [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) | End-to-end deployment from scratch |
-| [DEMO_VIDEO_SCRIPT.md](DEMO_VIDEO_SCRIPT.md) | 3-minute hackathon demo script |
-| [SHOWCASE_VIDEO_SCRIPT.md](SHOWCASE_VIDEO_SCRIPT.md) | Full showcase video script |
-
----
-
 <div align="center">
 
 **D.A.M.I — Built with ❤️ on Google Cloud Platform**
-
-*Gen AI Academy APAC Edition — hack2skill*
 
 *Because infrastructure shouldn't require a war room.*
 
