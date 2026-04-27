@@ -1,96 +1,167 @@
-# 🚀 GenAI DevOps Orchestrator
+<div align="center">
 
-An **AI-powered, multi-agent DevOps platform** that autonomously manages CI/CD pipelines, remediates failures, and coordinates across Jira, GitHub, Jenkins, Confluence, Slack, and Google Calendar — all from a single natural language interface.
+# ⚡ Aether AI — Autonomous DevOps Orchestrator
 
-> Built with **Gemini 2.5 Flash** on **Google Cloud Platform** for the GenAI Hackathon.
+### *One Prompt. Entire Infrastructure. Zero Toil.*
 
----
+An **AI-powered, multi-agent platform** that autonomously designs cloud architectures, provisions infrastructure via Terraform, self-heals CI/CD pipelines, and orchestrates across **9+ enterprise tools** — all from a single natural language interface.
 
-## ✨ Core Capabilities
+[![Built on GCP](https://img.shields.io/badge/Built%20on-Google%20Cloud-4285F4?logo=google-cloud&logoColor=white)](https://cloud.google.com)
+[![Powered by Gemini](https://img.shields.io/badge/Powered%20by-Gemini%202.5-8E75B2?logo=google&logoColor=white)](https://deepmind.google/technologies/gemini/)
+[![Cloud Run](https://img.shields.io/badge/Deployed%20on-Cloud%20Run-4285F4?logo=google-cloud&logoColor=white)](https://cloud.google.com/run)
+[![MCP Architecture](https://img.shields.io/badge/Architecture-MCP%20Microservices-FF6F00)](https://modelcontextprotocol.io)
 
-### 🛡️ For DevOps Engineers (Autonomous SRE)
-
-| Capability | What It Does | Example Prompt |
-| :--- | :--- | :--- |
-| **Self-Healing CI/CD** | Detects Jenkins failures, diagnoses root cause via AI + RAG, writes code fix, creates PR, merges, restarts pipeline — all autonomously. | `"Trigger test-pipeline with FAIL=true"` |
-| **RAG-Powered Log Analysis** | Extracts error signatures from pasted logs, searches Confluence Wiki for internal runbooks, and provides company-specific remediation. | `"Analyze this log: MemoryError loading customer dataset"` |
-| **Auto Release Notes** | Fetches all merged PRs from GitHub, cross-references Jira tickets, synthesizes release notes via AI, publishes to Confluence, and notifies Slack. | `"Generate release notes for v1.0.0"` |
-| **Natural Language DB Queries** | Converts plain English questions into PostgreSQL queries against AlloyDB metrics tables (DORA Metrics). | `"Show me build success rate for the last 7 days"` |
-| **Autonomous Post-Mortem** | After an auto-fix, automatically schedules a Google Calendar post-mortem meeting and auto-generates a Runbook in Confluence. | *(Triggers automatically)* |
-| **Jenkins Webhook** | Zero-touch integration — Jenkins calls the orchestrator webhook on build completion for fully passive monitoring. | `POST /webhook/jenkins` |
-| **DORA Metrics Dashboard** | Live Streamlit dashboard tracking MTTR, fix rate, confidence scores, pipeline pass rate, and incident history. | *(Visit Dashboard page)* |
-
-### 🛠️ For Software Developers (Pair Programmer)
-
-| Capability | What It Does | Example Prompt |
-| :--- | :--- | :--- |
-| **AI Bug Fixing** | Reads Jira ticket + source code from GitHub, generates a fix, commits to a feature branch, creates a PR, and posts an AI code review. | `"Fix ticket SCRUM-11 in the ci_cd repo"` |
-| **AI Code Review** | Reviews any PR for bugs, security vulnerabilities (hardcoded secrets, SQL injection, XSS), code quality, and posts the review as a GitHub PR comment. | `"Review PR #18"` |
-| **Jira Management** | Full ticket lifecycle — create, search (JQL), update status, add comments, assign to sprints. | `"Show all open bugs in SCRUM project"` |
-| **GitHub Operations** | Read files, list branches/PRs, create branches, commit code, create PRs, merge PRs. | `"List all open PRs in ci_cd repo"` |
-| **Slack Notifications** | Context-aware messages — the AI resolves placeholders and sends actual data, not templates. | `"Tell the team on Slack that SCRUM-5 is fixed"` |
-| **Calendar Scheduling** | Create Google Calendar events for deployments, syncs, or war rooms. | `"Schedule a deployment review for tomorrow at 2pm"` |
-| **Knowledge Search** | Query Confluence Wiki and AlloyDB vector store for past incidents, runbooks, and internal policies. | `"Search runbooks for divide by zero error"` |
+</div>
 
 ---
 
-## 🏗️ Architecture
+## 🧠 What is Aether AI?
+
+**Aether AI** is an autonomous DevOps orchestrator that replaces manual infrastructure workflows with **AI-driven, multi-agent collaboration**. Instead of writing Terraform by hand, configuring CI/CD pipelines manually, or triaging incidents at 3 AM — you simply describe what you need in plain English.
+
+**The AI handles the rest — end to end.**
 
 ```
-┌──────────────┐     ┌──────────────────────────────────────────┐
-│  Streamlit   │────▶│         Orchestrator (Gemini 2.5)        │
-│  Chat + Dash │     │  Plan → Execute → Synthesize (2-Pass)    │
-└──────────────┘     └────┬────┬────┬────┬────┬────┬────────────┘
-                          │    │    │    │    │    │
-                    ┌─────▼┐ ┌▼───┐ ┌▼──┐ ┌▼──┐ ┌▼────┐ ┌▼─────────┐
-                    │Jenkin│ │Git │ │Jir│ │Sla│ │Cal  │ │Confluence│
-                    │s MCP │ │Hub │ │ a │ │ ck│ │ndar │ │  MCP     │
-                    └──────┘ └────┘ └───┘ └───┘ └─────┘ └──────────┘
-                                                              │
-                          ┌───────────────────────────────────▼───┐
-                          │          AlloyDB (PostgreSQL)          │
-                          │  workflows │ incidents │ embeddings   │
-                          │  runbooks  │ pipeline_runs │ chat     │
-                          └──────────────────────────────────────-┘
+"Design a HIPAA-compliant GKE architecture on GCP with Cloud SQL and 99.99% availability"
 ```
 
-### Technology Stack
-- **AI Engine**: Gemini 2.5 Flash via Vertex AI
-- **Embeddings**: Vertex AI `text-embedding-005` (768 dimensions)
-- **Database**: AlloyDB (PostgreSQL) + `pgvector` for semantic search
-- **Compute**: Google Cloud Run (serverless)
-- **Secrets**: GCP Secret Manager (zero hardcoded credentials)
-- **Frontend**: Streamlit (Chat UI + Metrics Dashboard)
-- **CI/CD**: Jenkins on GCE VM
+↓ Aether AI automatically:
+
+✅ Runs a **multi-agent debate** (Architect → SecOps → FinOps) to design the optimal architecture  
+✅ Generates a **Mermaid architecture diagram** with full network topology  
+✅ Publishes the **architecture draft to Confluence** for team review  
+✅ Waits for **human approval** (Human-in-the-Loop)  
+✅ Generates **production-ready Terraform** code  
+✅ Opens a **GitHub Pull Request** with the IaC  
+✅ Creates a **Final Migration Runbook** in Confluence  
+✅ Notifies the team on **Slack** at every stage  
+
+---
+
+## 🏛️ Multi-Agent Architecture
+
+Aether AI uses a **collaborative multi-agent system** where specialized AI personas debate and refine each design:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        AETHER AI ORCHESTRATOR                          │
+│                    (Gemini 2.5 Pro + Flash)                            │
+│                                                                        │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐ │
+│  │  🏗️ Principal │  │  🛡️ SecOps   │  │  💰 FinOps   │  │ 📐 Diagram │ │
+│  │  Architect   │──▶│  Reviewer    │──▶│  Optimizer   │──▶│ Generator  │ │
+│  │  (Design)    │  │  (Harden)    │  │  (Optimize)  │  │ (Visualize)│ │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └────────────┘ │
+│         │                                                       │      │
+│         ▼                                                       ▼      │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │              HUMAN-IN-THE-LOOP APPROVAL GATEWAY                 │   │
+│  │         (Review in UI → Approve → Auto-Provision)               │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│         │                                                              │
+│         ▼                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                 │
+│  │ 📝 Terraform │  │ 🔀 GitHub PR │  │ 📚 Confluence│                 │
+│  │  Generator   │──▶│  Creator     │──▶│  Runbook     │                │
+│  └──────────────┘  └──────────────┘  └──────────────┘                 │
+└─────────────────────────────────────────────────────────────────────────┘
+         │           │           │           │           │
+   ┌─────▼──┐  ┌─────▼──┐  ┌────▼───┐  ┌───▼────┐  ┌──▼──────┐  ┌──────────┐
+   │Jenkins │  │GitHub  │  │ Jira   │  │ Slack  │  │Calendar │  │Confluence│
+   │  MCP   │  │  MCP   │  │  MCP   │  │  MCP   │  │  MCP    │  │   MCP    │
+   └────────┘  └────────┘  └────────┘  └────────┘  └─────────┘  └──────────┘
+                                    │
+                          ┌─────────▼──────────┐
+                          │  AlloyDB PostgreSQL │
+                          │  + pgvector (RAG)   │
+                          └────────────────────┘
+```
+
+---
+
+## ✨ Feature Matrix
+
+### 🏗️ Cloud Architecture & Provisioning
+
+| Feature | Description |
+|:--------|:------------|
+| **AI Architecture Design** | Describe your requirements in plain English → get a full enterprise-grade GCP architecture with networking, compute, databases, security, and monitoring |
+| **Multi-Agent Debate** | Principal Architect designs → SecOps hardens → FinOps optimizes costs — 3 AI agents collaborate on every design |
+| **Mermaid Diagrams** | Auto-generated, color-coded architecture diagrams with full network topology, CIDR ranges, and service connections |
+| **CSV Inventory Migration** | Upload or reference a CSV of on-prem servers → AI maps each workload to optimal GCP managed services |
+| **Terraform Generation** | Approved architectures automatically generate production-ready Terraform (VPC, GKE, Cloud SQL, IAM, etc.) |
+| **GitHub PR Creation** | Terraform code is committed to a feature branch and a Pull Request is opened automatically |
+| **Human-in-the-Loop** | Architecture designs require explicit human approval before any infrastructure is provisioned |
+| **Confluence Documentation** | Hierarchical documentation: Parent Project Page → Architecture Draft → Final Migration Runbook |
+
+### 🛡️ Self-Healing CI/CD (Autonomous SRE)
+
+| Feature | Description |
+|:--------|:------------|
+| **Self-Healing Pipelines** | Detects Jenkins failures → diagnoses root cause via AI + RAG → writes code fix → creates PR → merges → restarts pipeline |
+| **RAG-Powered Analysis** | Semantic search across past incidents (pgvector) + Confluence runbooks for context-aware remediation |
+| **Auto Code Review** | AI reviews PRs for bugs, security vulnerabilities (hardcoded secrets, SQL injection, XSS), and code quality |
+| **Auto Release Notes** | Fetches merged PRs + Jira tickets → synthesizes release notes → publishes to Confluence → notifies Slack |
+| **DORA Metrics** | Live dashboard tracking Deployment Frequency, Lead Time, MTTR, and Change Failure Rate |
+
+### 🛠️ Developer Productivity
+
+| Feature | Description |
+|:--------|:------------|
+| **Natural Language Ops** | Talk to your infrastructure: *"Show me build success rate for the last 7 days"* → auto-generates SQL |
+| **Jira Management** | Create, search (JQL), update tickets, assign to sprints — all via chat |
+| **GitHub Operations** | Read files, list branches/PRs, create branches, commit code, merge PRs |
+| **Slack Notifications** | Context-aware messages at every workflow stage |
+| **Calendar Scheduling** | Auto-schedule post-mortem meetings and deployment reviews |
+| **Knowledge Search** | Query Confluence Wiki and vector store for past incidents and runbooks |
+
+---
+
+## 🛠️ Technology Stack
+
+| Layer | Technology |
+|:------|:-----------|
+| **AI Engine** | Gemini 2.5 Pro (architecture reasoning) + Gemini 2.5 Flash (fallback & speed) |
+| **Embeddings** | Vertex AI `text-embedding-005` (768 dimensions) |
+| **Database** | AlloyDB PostgreSQL + `pgvector` for semantic search (RAG) |
+| **Compute** | Google Cloud Run (serverless, auto-scaling) |
+| **IaC** | Terraform (auto-generated) |
+| **Secrets** | GCP Secret Manager (zero hardcoded credentials) |
+| **Frontend** | Next.js (React) — modern glassmorphism UI |
+| **CI/CD** | Jenkins on GCE + GitHub Actions |
+| **Integrations** | 6 MCP microservices: Jenkins, GitHub, Jira, Slack, Calendar, Confluence |
 
 ---
 
 ## 📁 Repository Structure
 
 ```
-GenAI-DevOps-Orchestrator/
+Aether-AI/
 │
-├── orchestrator/              # The AI Brain (1,622 lines)
-│   ├── main.py                # Gemini routing, auto-healing, tool execution
+├── orchestrator/                  # 🧠 The AI Brain (~4,000 lines)
+│   ├── main.py                   # Multi-agent orchestration, tool routing, Mermaid sanitization
 │   ├── Dockerfile
 │   └── requirements.txt
 │
-├── ui/                        # Streamlit Frontend
-│   ├── app.py                 # Chat interface with live polling
-│   ├── pages/
-│   │   └── dashboard.py       # DORA Metrics & Incident Dashboard
-│   ├── .streamlit/
-│   │   └── config.toml        # UI theme configuration
-│   ├── Dockerfile
-│   └── requirements.txt
+├── ui-v2/                         # 🎨 Next.js Frontend (Glassmorphism UI)
+│   ├── app/
+│   │   ├── page.js               # Main application shell
+│   │   └── components/
+│   │       ├── ChatView.js       # AI chat interface with Mermaid rendering
+│   │       ├── AgentHubView.js   # Multi-agent visualization
+│   │       ├── DashboardView.js  # DORA metrics & system health
+│   │       ├── SettingsPanel.js  # Configuration & preferences
+│   │       └── ...
+│   ├── package.json
+│   └── Dockerfile
 │
-├── mcp-servers/               # Model Context Protocol Microservices
-│   ├── jenkins-mcp/           # Trigger, status, logs, lastfailed
-│   ├── github-mcp/            # Read, commit, PRs, branches, reviews
-│   ├── jira-mcp/              # CRUD, JQL search, sprint management
-│   ├── slack-mcp/             # Messages + interactive approve/reject buttons
-│   ├── calendar-mcp/          # Google Calendar event creation
-│   └── confluence-mcp/        # Wiki page creation + CQL search (RAG)
+├── mcp-servers/                   # 🔌 Model Context Protocol Microservices
+│   ├── jenkins-mcp/              # Pipeline trigger, status, logs, failure detection
+│   ├── github-mcp/               # PRs, commits, branches, code review
+│   ├── jira-mcp/                 # Tickets, JQL search, sprint management
+│   ├── slack-mcp/                # Notifications + interactive approve/reject
+│   ├── calendar-mcp/             # Google Calendar event creation
+│   └── confluence-mcp/           # Wiki pages (hierarchical) + CQL search (RAG)
 │
 ├── .gitignore
 └── README.md
@@ -104,34 +175,110 @@ GenAI-DevOps-Orchestrator/
 - **IAM-based access** — Cloud Run service accounts with least-privilege roles
 - **GitHub Push Protection** — repository-level secret scanning enabled
 - **AI Security Scanning** — PR reviews check for hardcoded secrets, SQL injection, XSS, path traversal
+- **Human-in-the-Loop** — no infrastructure is provisioned without explicit human approval
 
 ---
 
-## 🎬 Demo Workflow: Self-Healing Pipeline
+## 🎬 Demo Scenarios
 
-1. **Trigger**: User says `"Trigger test-pipeline with FAIL=true"`
-2. **Detect**: Orchestrator polls Jenkins, detects `FAILURE`
-3. **Analyze**: AI reads build logs + searches Confluence runbooks + queries AlloyDB RAG
-4. **Fix**: Auto-generates corrected code, commits to `auto-fix/build-N` branch
-5. **PR**: Creates Pull Request with full description
-6. **Review**: AI posts code review + security scan as PR comment
-7. **Merge**: High-confidence fixes (≥90%) auto-merge; others get Slack approve/reject buttons
-8. **Close**: Jira ticket auto-closed with PR link
-9. **Learn**: Incident stored in pgvector for future RAG; Runbook auto-generated
-10. **Document**: Troubleshooting guide published to Confluence Wiki
-11. **Schedule**: Post-mortem meeting auto-created on Google Calendar
-12. **Notify**: Full summary sent to Slack channel
+### Scenario 1: End-to-End Cloud Architecture Provisioning
+
+```
+User: "Design a HIPAA-compliant telemedicine architecture on GCP with GKE, 
+       Cloud SQL, and 99.99% availability for 20,000 concurrent users"
+
+→ 🏗️ Principal Architect designs full architecture
+→ 🛡️ SecOps Agent hardens security (VPC-SC, Cloud Armor, CMEK)
+→ 💰 FinOps Agent optimizes costs (CUDs, Spot VMs, right-sizing)
+→ 📐 Mermaid diagram auto-generated
+→ 📚 Architecture Draft published to Confluence
+→ ⏸️ AWAITING HUMAN APPROVAL in UI
+
+User: "Approve and provision this architecture"
+
+→ 📝 Terraform code generated (VPC, GKE, Cloud SQL, IAM, NAT)
+→ 🔀 GitHub PR created on feature branch
+→ 📚 Final Migration Runbook published to Confluence
+→ 💬 Slack notification sent to team
+```
+
+### Scenario 2: CSV-Based Migration
+
+```
+User: "Analyze inventory.csv from my repo and migrate to GCP"
+
+→ 📊 AI reads CSV (hostnames, OS, CPU, RAM, roles)
+→ 🗺️ Maps each workload: app-servers → GKE, db-master → Cloud SQL, cache → Memorystore
+→ 🏗️ Full migration architecture designed with phased rollout
+→ ⏸️ Awaits human approval before provisioning
+```
+
+### Scenario 3: Self-Healing Pipeline
+
+```
+User: "Trigger test-pipeline with FAIL=true"
+
+→ 🔴 Jenkins build fails
+→ 🔍 AI reads logs + searches RAG for similar past incidents
+→ 🔧 Auto-generates code fix, commits to branch
+→ 🔀 Creates PR with AI code review
+→ ✅ High-confidence fixes auto-merge; others get Slack approve/reject
+→ 📚 Runbook + post-mortem auto-generated
+```
+
+### Scenario 4: Discovery Mode
+
+```
+User: "Design a cloud architecture for a social media startup"
+
+→ 🤔 AI detects vague requirements
+→ ❓ Asks 10+ clarifying questions (scale, budget, compliance, regions...)
+→ User provides answers
+→ 🏗️ Full architecture designed based on answers
+```
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Deployment
+
+All services run on **Google Cloud Run** (serverless):
 
 ```bash
 # Deploy the Orchestrator
 cd orchestrator
-gcloud builds submit --tag gcr.io/[PROJECT_ID]/devops-orchestrator
-gcloud run deploy devops-orchestrator --image gcr.io/[PROJECT_ID]/devops-orchestrator \
-    --set-env-vars "DATABASE_URL=postgresql+asyncpg://[USER]:[PASS]@[IP]/postgres"
+gcloud run deploy aether-orchestrator --source . \
+    --region us-central1 --allow-unauthenticated
+
+# Deploy the UI
+cd ui-v2
+gcloud run deploy aether-ui --source . \
+    --region us-central1 --allow-unauthenticated
+
+# Deploy MCP Servers (repeat for each)
+cd mcp-servers/github-mcp
+gcloud run deploy github-mcp --source . \
+    --region us-central1 --allow-unauthenticated
 ```
 
 ---
+
+## 📊 System Metrics
+
+| Metric | Value |
+|:-------|:------|
+| **Orchestrator Lines of Code** | ~4,000 |
+| **MCP Microservices** | 6 (Jenkins, GitHub, Jira, Slack, Calendar, Confluence) |
+| **AI Agents** | 4 (Architect, SecOps, FinOps, Diagram Generator) |
+| **Integrated Tools** | 9+ (Jenkins, GitHub, Jira, Slack, Calendar, Confluence, Terraform, AlloyDB, Vertex AI) |
+| **Deployment Model** | Fully serverless (Cloud Run) |
+| **AI Models Used** | Gemini 2.5 Pro + Gemini 2.5 Flash |
+
+---
+
+<div align="center">
+
+**Built with ❤️ on Google Cloud Platform for the GenAI Hackathon**
+
+*Aether AI — Because infrastructure shouldn't require a war room.*
+
+</div>
