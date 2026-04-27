@@ -79,3 +79,11 @@ node_modules/
 .next/
 out/
 build/
+
+# Legacy Streamlit UI (replaced by Next.js ui-v2)
+ui/
+
+# Default framework files
+ui-v2/README.md
+ui-v2/AGENTS.md
+ui-v2/CLAUDE.md

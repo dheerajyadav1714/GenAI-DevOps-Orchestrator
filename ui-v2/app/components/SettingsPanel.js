@@ -184,7 +184,7 @@ export default function SettingsPanel({ isOpen, onClose, isDark, setIsDark }) {
                   <div>
                     <div className="text-xs font-semibold text-on-surface-variant mb-1">Orchestrator Endpoint</div>
                     <div className="bg-surface-container-low px-3 py-2 rounded-lg text-[11px] font-mono text-on-surface border border-outline-variant/20 truncate">
-                      devops-orchestrator-v2-688623456290.us-central1.run.app
+                      dami-orchestrator-688623456290.us-central1.run.app
                     </div>
                   </div>
                   <div className="flex items-center justify-between">

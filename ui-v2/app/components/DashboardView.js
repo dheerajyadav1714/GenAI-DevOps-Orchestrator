@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const API_BASE = "https://devops-orchestrator-v2-688623456290.us-central1.run.app";
+const API_BASE = "https://dami-orchestrator-688623456290.us-central1.run.app";
 
 const GRADE_COLORS = {
   Elite: { bg: 'from-emerald-500/20 to-emerald-500/5', text: 'text-emerald-400', border: 'border-emerald-500/30', dot: 'bg-emerald-400' },

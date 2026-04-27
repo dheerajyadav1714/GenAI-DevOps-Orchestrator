@@ -247,7 +247,7 @@ export default function ChatView({ activeAgent, messages, isLoading, liveSteps =
           </div>
           <div>
             <h3 className="text-sm font-bold text-on-surface">
-              {activeAgent?.name || 'DevOps AI Assistant'}
+              {activeAgent?.name || 'D.A.M.I Assistant'}
             </h3>
             <span className="text-[10px] font-mono text-on-surface-variant uppercase tracking-wider">
               {activeAgent ? 'Specialized Agent' : 'General Purpose'}
@@ -346,7 +346,7 @@ export default function ChatView({ activeAgent, messages, isLoading, liveSteps =
                 <div className={`flex flex-col gap-1 ${isUser ? 'items-end max-w-[85%]' : 'items-start max-w-[95%]'} min-w-0`}>
                   {/* Role Label */}
                   <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider px-1">
-                    {isUser ? 'You' : (activeAgent?.name || 'DevOps AI')}
+                    {isUser ? 'You' : (activeAgent?.name || 'D.A.M.I')}
                   </span>
 
                   {/* Bubble */}
@@ -511,7 +511,7 @@ export default function ChatView({ activeAgent, messages, isLoading, liveSteps =
               <div className="flex flex-col gap-1 flex-1 max-w-lg">
                 <div className="flex items-center justify-between px-1">
                   <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
-                    {activeAgent?.name || 'DevOps AI'}
+                    {activeAgent?.name || 'D.A.M.I'}
                   </span>
                   <span className="text-[10px] text-on-surface-variant/60 font-mono tabular-nums">
                     {elapsedTime}s
@@ -624,7 +624,7 @@ export default function ChatView({ activeAgent, messages, isLoading, liveSteps =
             onChange={(e) => setInput(e.target.value)}
             disabled={isLoading}
             className="flex-1 bg-transparent border-none text-on-surface placeholder:text-on-surface-variant/40 focus:ring-0 font-medium text-sm px-3 outline-none disabled:opacity-50"
-            placeholder={activeAgent ? `Instruct ${activeAgent.name}...` : "Ask DevOps AI anything..."}
+            placeholder={activeAgent ? `Instruct ${activeAgent.name}...` : "Ask D.A.M.I anything..."}
           />
           <button 
             type="submit" 
