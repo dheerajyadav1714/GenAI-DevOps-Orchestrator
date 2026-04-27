@@ -19,9 +19,32 @@ const UPCOMING = [
   { name: 'AWS', icon: '🟠', category: 'Cloud Platform' },
 ];
 
+const WORKSPACE_DEFAULTS = {
+  defaultRepo: 'dheerajyadav1714/ci_cd',
+  jiraProject: 'SCRUM',
+  jenkinsJob: 'test-pipeline',
+  gcpProject: 'gcp-experiments-490315',
+};
+
 export default function SettingsPanel({ isOpen, onClose, isDark, setIsDark }) {
   const [healthStatuses, setHealthStatuses] = useState({});
   const [activeTab, setActiveTab] = useState('general');
+  const [workspace, setWorkspace] = useState(WORKSPACE_DEFAULTS);
+  const [saved, setSaved] = useState(false);
+
+  // Load workspace config from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('devops_workspace');
+      if (stored) setWorkspace({ ...WORKSPACE_DEFAULTS, ...JSON.parse(stored) });
+    } catch {}
+  }, []);
+
+  const saveWorkspace = () => {
+    localStorage.setItem('devops_workspace', JSON.stringify(workspace));
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -78,12 +101,13 @@ export default function SettingsPanel({ isOpen, onClose, isDark, setIsDark }) {
         <div className="flex gap-1 px-6 pb-3 shrink-0">
           {[
             { id: 'general', label: 'General', icon: 'tune' },
+            { id: 'workspace', label: 'Workspace', icon: 'business_center' },
             { id: 'integrations', label: 'Integrations', icon: 'hub' },
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
+              className={`flex items-center gap-2 px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all ${
                 activeTab === tab.id
                   ? 'bg-primary text-on-primary shadow-lg'
                   : 'text-on-surface-variant hover:bg-on-surface/5'
@@ -198,7 +222,90 @@ export default function SettingsPanel({ isOpen, onClose, isDark, setIsDark }) {
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-xs text-on-surface-variant">Agents</span>
-                    <span className="text-xs font-mono font-bold text-on-surface">8 Autonomous</span>
+                    <span className="text-xs font-mono font-bold text-on-surface">10 Autonomous</span>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {activeTab === 'workspace' && (
+            <>
+              <div className="bg-gradient-to-r from-primary/10 to-violet-500/10 rounded-2xl p-4 border border-primary/20">
+                <div className="flex items-center gap-3 mb-1">
+                  <span className="material-symbols-outlined text-primary text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>business_center</span>
+                  <div>
+                    <div className="text-sm font-bold text-on-surface">Workspace Configuration</div>
+                    <div className="text-[11px] text-on-surface-variant">Configure defaults for your enterprise environment</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-surface-container rounded-2xl p-4 border border-outline-variant/20">
+                <div className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-3">Default Repository</div>
+                <input
+                  type="text" value={workspace.defaultRepo}
+                  onChange={e => setWorkspace(p => ({ ...p, defaultRepo: e.target.value }))}
+                  className="w-full bg-surface-container-low px-3 py-2.5 rounded-lg text-sm font-mono text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none transition-colors"
+                  placeholder="owner/repository"
+                />
+                <div className="text-[10px] text-on-surface-variant mt-1.5">Used by agents for code analysis, PR creation, and deployments</div>
+              </div>
+
+              <div className="bg-surface-container rounded-2xl p-4 border border-outline-variant/20">
+                <div className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-3">Jira Project Key</div>
+                <input
+                  type="text" value={workspace.jiraProject}
+                  onChange={e => setWorkspace(p => ({ ...p, jiraProject: e.target.value }))}
+                  className="w-full bg-surface-container-low px-3 py-2.5 rounded-lg text-sm font-mono text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none transition-colors"
+                  placeholder="PROJECT_KEY"
+                />
+                <div className="text-[10px] text-on-surface-variant mt-1.5">Jira project for ticket management and sprint tracking</div>
+              </div>
+
+              <div className="bg-surface-container rounded-2xl p-4 border border-outline-variant/20">
+                <div className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-3">Jenkins Pipeline</div>
+                <input
+                  type="text" value={workspace.jenkinsJob}
+                  onChange={e => setWorkspace(p => ({ ...p, jenkinsJob: e.target.value }))}
+                  className="w-full bg-surface-container-low px-3 py-2.5 rounded-lg text-sm font-mono text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none transition-colors"
+                  placeholder="pipeline-name"
+                />
+                <div className="text-[10px] text-on-surface-variant mt-1.5">Default Jenkins job for CI/CD operations</div>
+              </div>
+
+              <div className="bg-surface-container rounded-2xl p-4 border border-outline-variant/20">
+                <div className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-3">GCP Project ID</div>
+                <input
+                  type="text" value={workspace.gcpProject}
+                  onChange={e => setWorkspace(p => ({ ...p, gcpProject: e.target.value }))}
+                  className="w-full bg-surface-container-low px-3 py-2.5 rounded-lg text-sm font-mono text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none transition-colors"
+                  placeholder="my-gcp-project-id"
+                />
+                <div className="text-[10px] text-on-surface-variant mt-1.5">GCP project for cloud infrastructure and deployments</div>
+              </div>
+
+              <button
+                onClick={saveWorkspace}
+                className={`w-full py-3 rounded-xl text-sm font-bold transition-all duration-200 ${
+                  saved
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-primary text-on-primary hover:shadow-lg hover:scale-[1.01] active:scale-[0.99]'
+                }`}
+              >
+                {saved ? '✓ Saved Successfully' : 'Save Configuration'}
+              </button>
+
+              <div className="bg-surface-container rounded-2xl p-4 border border-outline-variant/20">
+                <div className="flex items-start gap-3">
+                  <span className="material-symbols-outlined text-amber-400 text-[20px] mt-0.5">info</span>
+                  <div>
+                    <div className="text-sm font-semibold text-on-surface mb-1">Enterprise Integration</div>
+                    <div className="text-[11px] text-on-surface-variant leading-relaxed">
+                      Configure your organization&apos;s tools above. Any enterprise can connect their 
+                      Jenkins, GitHub, Jira, and GCP environments in under 5 minutes. 
+                      MCP connectors handle authentication and API routing automatically.
+                    </div>
                   </div>
                 </div>
               </div>

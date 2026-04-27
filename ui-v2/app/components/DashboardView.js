@@ -19,6 +19,8 @@ const AGENTS = [
   { name: 'Security Engineer', icon: 'shield', tools: ['Vulnerability Scan', 'Drift Detection', 'Compliance'], status: 'online' },
   { name: 'QA Engineer', icon: 'bug_report', tools: ['Test Generator', 'Code Review'], status: 'online' },
   { name: 'Cloud Engineer', icon: 'cloud', tools: ['GCP Explorer', 'Terraform Remediation', 'Provisioning'], status: 'online' },
+  { name: 'Pipeline Healer', icon: 'healing', tools: ['Self-Healing', 'Auto-Fix', 'Chaos Recovery'], status: 'online' },
+  { name: 'Release Manager', icon: 'new_releases', tools: ['Release Notes', 'Changelog', 'Confluence'], status: 'online' },
 ];
 
 export default function DashboardView({ metrics }) {

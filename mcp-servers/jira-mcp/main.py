@@ -99,14 +99,27 @@ def search_issues(jql: str, max_results: int = 50):
 @app.post("/issue")
 def create_issue(issue: IssueCreate):
     try:
-        new_issue = jira.create_issue(
-            project=issue.project_key,
-            summary=issue.summary,
-            description=issue.description,
-            issuetype={'name': issue.issue_type}
-        )
+        try:
+            new_issue = jira.create_issue(
+                project=issue.project_key,
+                summary=issue.summary,
+                description=issue.description,
+                issuetype={'name': issue.issue_type.capitalize()}
+            )
+        except Exception as inner_e:
+            if "issuetype" in str(inner_e).lower() or "issue type" in str(inner_e).lower():
+                logger.warning(f"Failed to create issue with type '{issue.issue_type}'. Falling back to 'Task'. Error: {inner_e}")
+                new_issue = jira.create_issue(
+                    project=issue.project_key,
+                    summary=issue.summary,
+                    description=issue.description,
+                    issuetype={'name': 'Task'}
+                )
+            else:
+                raise inner_e
         return {"key": new_issue.key, "url": f"{JIRA_URL}/browse/{new_issue.key}"}
     except Exception as e:
+        logger.exception(f"Failed to create Jira issue: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ========== ASSIGN TO SPRINT (Agile API) ==========

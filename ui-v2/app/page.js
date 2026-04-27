@@ -85,7 +85,8 @@ export default function Home() {
       setActiveView("CHAT");
       setTimeout(() => sendMessage(agent.initialPrompt), 100);
     } else {
-      setIsMegaMenuOpen(true);
+      // Agent card click — switch to chat with agent context
+      setActiveView("CHAT");
     }
   };
 
@@ -130,7 +131,7 @@ export default function Home() {
       let completed = false;
       let previousStepCount = 0;
       const pollStartTime = Date.now();
-      const MAX_POLL_TIMEOUT = 120000; // 120 seconds safety timeout
+      const MAX_POLL_TIMEOUT = 900000; // 900 seconds safety timeout (15 minutes) for deep multi-agent tasks
       let pollErrors = 0;
 
       while (!completed) {
@@ -211,6 +212,9 @@ export default function Home() {
               }
             }
 
+            // Extract suggestions from the reply step
+            const replySuggestions = replyStep?.params?.suggestions || [];
+
             setMessages((prev) => [...prev, { 
               role: "assistant", 
               content: replyText,
@@ -218,7 +222,8 @@ export default function Home() {
               diff,
               diffs,
               actionCard,
-              actionCards
+              actionCards,
+              suggestions: replySuggestions
             }]);
 
             // Record completed workflow in activity feed

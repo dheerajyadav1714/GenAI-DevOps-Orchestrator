@@ -38,27 +38,41 @@ secrets/
 *.key
 credentials.json
 token.json
- service_account.json
-*.json
-DEPLOYMENT_GUIDE.md
-PROMPT_CATALOG.md
-PPT_CONTENT.md
-DEMO_SCRIPT.md
-ADVANCED_DEMO_SCRIPT.md
-ADVANCED_SCENARIOS.md
-UPDATED_ARCHITECTURE_DIAGRAMS.md
-TOP_100_REFINEMENT_IDEAS.md
-BUSINESS_STRATEGY.md
-FUTURE_ENTERPRISE_ENHANCEMENTS.md
+service_account.json
+genai-hackathon-*.json
+
+# Ignore all markdown docs for submission (keep only README)
+*.md
+!README.md
+
+# Doc files to ignore
+DEPLOYMENT_GUIDE*
+PROMPT_CATALOG*
+PPT_CONTENT*
+DEMO_SCRIPT*
+ADVANCED_*
+UPDATED_ARCHITECTURE*
+TOP_100*
+BUSINESS_STRATEGY*
+FUTURE_ENTERPRISE*
 
 # Local & Scratch
 orchestrator/logs.txt
 orchestrator/orchestrator.db
-orchestrator/test_regex.py
+orchestrator/test_*.py
+orchestrator/scratch*.py
+orchestrator/run_san.py
+orchestrator/final_verify.py
 scratch/
+logs.txt
+out.txt
+scratch.txt
+read_logs*.py
+test_*.py
 implementation_plan.md
 task.md
 walkthrough.md
+
 # Node / UI
 node_modules/
 .next/

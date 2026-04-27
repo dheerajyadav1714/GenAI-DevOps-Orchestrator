@@ -21,10 +21,13 @@ def get_secret(secret_name):
 # Since Atlassian uses the same unified token for Jira and Confluence, we re-use the Jira secrets!
 CONFLUENCE_DOMAIN = "djyadav1714.atlassian.net"
 
+from typing import Optional
+
 class PageRequest(BaseModel):
     space: str
     title: str
     content: str
+    parent_id: Optional[str] = None
 
 @app.post("/pages")
 def create_page(req: PageRequest):
@@ -49,6 +52,9 @@ def create_page(req: PageRequest):
             }
         }
     }
+    
+    if req.parent_id:
+        payload["ancestors"] = [{"id": req.parent_id}]
     
     resp = requests.post(
         url,

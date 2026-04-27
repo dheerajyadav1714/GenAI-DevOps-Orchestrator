@@ -281,13 +281,13 @@ export default function ChatView({ activeAgent, messages, isLoading, liveSteps =
       {/* Messages Area */}
       <div 
         ref={scrollRef}
-        className="flex-1 overflow-y-auto pt-10 pb-36 px-4 md:px-8 flex flex-col items-center no-scrollbar"
+        className="flex-1 overflow-y-auto pt-2 pb-36 px-4 md:px-8 flex flex-col items-center no-scrollbar"
       >
         <div className="w-full max-w-3xl flex flex-col gap-6">
           
           {/* Welcome State */}
           {!hasMessages && !isLoading && (
-            <div className="flex flex-col items-center justify-center py-16 gap-5 text-center w-full">
+            <div className="flex flex-col items-center justify-start pt-8 gap-5 text-center w-full">
               <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center border border-primary/20 shadow-lg">
                 <span className="material-symbols-outlined text-primary text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>smart_toy</span>
               </div>
@@ -465,6 +465,28 @@ export default function ChatView({ activeAgent, messages, isLoading, liveSteps =
                             </a>
                           )}
                         </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Suggestion Chips — Clickable quick actions */}
+                  {!isUser && msg.suggestions && msg.suggestions.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-outline-variant/15">
+                      <span className="text-[10px] text-on-surface-variant/60 uppercase tracking-wider font-bold w-full mb-1">Suggestions</span>
+                      {msg.suggestions.map((suggestion, sIdx) => (
+                        <button
+                          key={sIdx}
+                          onClick={() => onSendMessage && onSendMessage(suggestion)}
+                          disabled={isLoading}
+                          className="group flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium 
+                                     bg-primary/8 text-primary border border-primary/15
+                                     hover:bg-primary/15 hover:border-primary/30 hover:shadow-sm
+                                     active:scale-95 transition-all duration-200
+                                     disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <span className="material-symbols-outlined text-[13px] opacity-60 group-hover:opacity-100 transition-opacity">arrow_forward</span>
+                          {suggestion}
+                        </button>
                       ))}
                     </div>
                   )}

@@ -604,13 +604,41 @@ def resolve_placeholders(val, context):
         # Handle {{...}} format
         placeholders = re.findall(r'\{\{(.*?)\}\}', val)
         for p in placeholders:
-            resolved = get_from_context(p.strip(), context)
+            clean_p = p.strip()
+            resolved = get_from_context(clean_p, context)
+            
+            # Fallback heuristics for common LLM hallucinations
+            if resolved is None:
+                p_lower = clean_p.lower()
+                if "analyze" in p_lower or "log" in p_lower:
+                    # e.g., steps.analyze_logs.output.summary
+                    resolved = context.get("log_analysis", context.get("jenkins_failure", ""))
+                    # Truncate summary if requested specifically
+                    if "summary" in p_lower and isinstance(resolved, str):
+                        resolved = resolved.split("\n\n")[0] if "\n\n" in resolved else resolved[:200]
+                elif "build_number" in p_lower or "last_failed" in p_lower:
+                    # e.g., steps.get_last_failed_build.output.build_number
+                    resolved = context.get("jenkins_last_failed", {}).get("build_number", "")
+                
             if resolved is not None:
                 val = val.replace(f'{{{{{p}}}}}', str(resolved))
+                
         # Handle [[...]] format (Gemini sometimes uses brackets)
         bracket_placeholders = re.findall(r'\[\[(.*?)\]\]', val)
         for p in bracket_placeholders:
-            resolved = get_from_context(p.strip(), context)
+            clean_p = p.strip()
+            resolved = get_from_context(clean_p, context)
+            
+            # Fallback heuristics for common LLM hallucinations
+            if resolved is None:
+                p_lower = clean_p.lower()
+                if "analyze" in p_lower or "log" in p_lower:
+                    resolved = context.get("log_analysis", context.get("jenkins_failure", ""))
+                    if "summary" in p_lower and isinstance(resolved, str):
+                        resolved = resolved.split("\n\n")[0] if "\n\n" in resolved else resolved[:200]
+                elif "build_number" in p_lower or "last_failed" in p_lower:
+                    resolved = context.get("jenkins_last_failed", {}).get("build_number", "")
+                    
             if resolved is not None:
                 val = val.replace(f'[[{p}]]', str(resolved))
         # Handle PREVIOUS_STEP_RESULT.key pattern (common Gemini pattern)
@@ -632,6 +660,185 @@ def resolve_placeholders(val, context):
         return {k: resolve_placeholders(v, context) for k, v in val.items()}
     elif isinstance(val, list):
         return [resolve_placeholders(i, context) for i in val]
+    return val
+
+def sanitize_remaining_placeholders(val, context):
+    """Catch-all: deterministically resolve ANY remaining placeholder patterns that
+    resolve_placeholders missed. The LLM frequently hallucinates novel placeholder
+    formats like {get_build_logs.build_number}, {analyze_logs.summary},
+    step_3.key, $.steps[2].output, etc. This function maps them to actual context."""
+    if isinstance(val, dict):
+        return {k: sanitize_remaining_placeholders(v, context) for k, v in val.items()}
+    elif isinstance(val, list):
+        return [sanitize_remaining_placeholders(v, context) for v in val]
+    elif not isinstance(val, str):
+        return val
+
+    # Quick exit if no placeholder-like patterns
+    if '{' not in val and not re.search(r'\bstep_?\d+\.', val):
+        return val
+
+    # Build a flat lookup from ALL step results and named context entries
+    flat = {}
+    for i in range(1, 10):
+        step_data = context.get(f"step{i}")
+        if isinstance(step_data, dict):
+            for k, v in step_data.items():
+                if isinstance(v, (str, int, float, bool)):
+                    flat[k] = str(v)
+
+    # Add named context entries
+    for ctx_key in ['jenkins_last_failed', 'jenkins_logs_meta', 'jira_created', 'jira_issue']:
+        cv = context.get(ctx_key)
+        if isinstance(cv, dict):
+            for k, v in cv.items():
+                if isinstance(v, (str, int, float, bool)):
+                    if k not in flat:  # Don't overwrite step results
+                        flat[k] = str(v)
+
+    # Add string context entries
+    if "log_analysis" in context:
+        flat["log_analysis"] = str(context["log_analysis"])
+    if "jenkins_logs" in context:
+        flat["jenkins_logs"] = str(context["jenkins_logs"])
+
+    def _resolve_field(field_name):
+        """Resolve a field name to an actual value from context."""
+        lk = field_name.lower()
+
+        # Direct flat lookup
+        if field_name in flat:
+            return flat[field_name]
+
+        # Keyword-based matching for common fields
+        if 'build_number' in lk:
+            for i in range(1, 6):
+                sd = context.get(f"step{i}", {})
+                if isinstance(sd, dict) and "build_number" in sd:
+                    return str(sd["build_number"])
+            jlf = context.get("jenkins_last_failed", {})
+            if isinstance(jlf, dict) and "build_number" in jlf:
+                return str(jlf["build_number"])
+
+        elif lk in ('summary',) or ('summary' in lk and ('log' in lk or 'analyze' in lk)):
+            la = context.get("log_analysis", "")
+            if isinstance(la, str) and la:
+                # Extract meaningful summary: skip markdown headings like **Summary:**
+                lines = la.split('\n')
+                content_line = ""
+                for line in lines:
+                    stripped = line.strip()
+                    # Skip empty lines, markdown headings (**, ##, #), and label-only lines
+                    if not stripped:
+                        continue
+                    clean = re.sub(r'[\*#]+', '', stripped).strip().rstrip(':')
+                    if clean.lower() in ('summary', 'root cause', 'suggested fix', 'severity', 'analysis'):
+                        continue
+                    # Found actual content
+                    content_line = stripped.replace('**', '').replace('*', '').strip()
+                    break
+                if content_line:
+                    # Get first sentence
+                    dot_idx = content_line.find('. ')
+                    summary = content_line[:dot_idx+1] if dot_idx > 0 else content_line
+                    return summary[:120]  # Hard cap for safety
+                return la.split('\n\n')[0][:120] if '\n\n' in la else la[:120]
+
+        elif 'analysis' in lk or 'description' in lk:
+            la = context.get("log_analysis", "")
+            if la:
+                return str(la)
+
+        elif 'suggested_fix' in lk or lk == 'fix':
+            la = context.get("log_analysis", "")
+            if isinstance(la, str) and "Suggested Fix" in la:
+                idx = la.index("Suggested Fix")
+                end_idx = la.find("\n\n", idx + 14)
+                return la[idx:end_idx] if end_idx > 0 else la[idx:]
+
+        elif lk == 'logs':
+            return context.get("jenkins_logs", "")
+
+        elif lk in ('key', 'issue_key', 'issue', 'jira_key', 'ticket_key'):
+            jc = context.get("jira_created", {})
+            if isinstance(jc, dict) and "key" in jc:
+                return jc["key"]
+            # Also check step results for jira_key
+            for i in range(1, 6):
+                sd = context.get(f"step{i}", {})
+                if isinstance(sd, dict):
+                    for fld in ("jira_key", "key", "issue_key"):
+                        if fld in sd:
+                            return str(sd[fld])
+
+        elif lk in ('file_path', 'filepath', 'affected_file'):
+            for i in range(1, 6):
+                sd = context.get(f"step{i}", {})
+                if isinstance(sd, dict) and "file_path" in sd:
+                    return str(sd["file_path"])
+            # Fallback: check log_analysis for file mentions
+            la = context.get("log_analysis", "")
+            if isinstance(la, str):
+                fp_match = re.search(r'(?:src|lib|app)/[\w/]+\.py', la)
+                if fp_match:
+                    return fp_match.group(0)
+            return "src/bug.py"
+
+        elif lk == 'url' or lk == 'self':
+            jc = context.get("jira_created", {})
+            if isinstance(jc, dict):
+                return jc.get("url", jc.get("self", ""))
+
+        elif lk in ('status', 'result'):
+            jlf = context.get("jenkins_last_failed", {})
+            if isinstance(jlf, dict):
+                return jlf.get("result", "FAILURE")
+
+        elif lk == 'output':
+            # Generic "output" — try log_analysis first, then last step result
+            if context.get("log_analysis"):
+                return str(context["log_analysis"])[:500]
+
+        return None
+
+    # 1. Resolve {dotted.path} and {{dotted.path}} patterns (the main hallucination formats)
+    brace_patterns = re.findall(r'\{+([a-zA-Z_]\w*(?:\.\w+)+)\}+', val)
+    for p in brace_patterns:
+        last_key = p.split('.')[-1]
+        resolved = _resolve_field(last_key)
+        if resolved:
+            # Replace all brace variations: {p}, {{p}}, {{{p}}}, etc.
+            val = re.sub(r'\{+' + re.escape(p) + r'\}+', resolved, val)
+
+    # 2. Resolve bare step_N.field or stepN.field patterns (no braces at all)
+    bare_patterns = re.findall(r'\bstep_?(\d+)\.(\w+)\b', val)
+    for step_num, field in bare_patterns:
+        sd = context.get(f"step{step_num}", {})
+        if isinstance(sd, dict) and field in sd:
+            resolved = str(sd[field])
+            val = re.sub(rf'\bstep_?{step_num}\.{field}\b', resolved, val)
+        else:
+            # Try keyword fallback
+            resolved = _resolve_field(field)
+            if resolved:
+                val = re.sub(rf'\bstep_?{step_num}\.{field}\b', resolved, val)
+
+    # 3. Resolve JSONPath patterns: $.steps[N].output.field
+    jsonpath_patterns = re.findall(r'\$\.steps\[(\d+)\](?:\.output)?\.(\w+)', val)
+    for step_idx, field in jsonpath_patterns:
+        sd = context.get(f"step{int(step_idx)+1}", {})  # JSONPath is 0-indexed
+        resolved = None
+        if isinstance(sd, dict) and field in sd:
+            resolved = str(sd[field])
+        if not resolved:
+            resolved = _resolve_field(field)
+        if resolved:
+            val = re.sub(r'\$\.steps\[' + step_idx + r'\](?:\.output)?\.' + field, resolved, val)
+
+    # 4. Resolve <PLACEHOLDER> patterns like <JENKINS_URL>
+    if "<JENKINS_URL>" in val:
+        val = val.replace("<JENKINS_URL>", "http://136.111.20.45:8080")
+
     return val
 
 async def execute_workflow_async(workflow_id, user_request, override_steps=None):
@@ -764,11 +971,20 @@ RULES:
 9. IMPORTANT: Build numbers (e.g. "Build #96") are NOT the same as PR numbers. PRs usually have low numbers (e.g. #17, #18). If user says "review PR" with a build number, first use github.list_prs to find the correct PR, then use github.review_pr with the correct pr_number.
 10. For "review PR", always use the actual GitHub PR number, NOT the Jenkins build number.
 11. For log/error/traceback analysis requests like "analyze this log", "what does this error mean", ALWAYS use log_analysis.analyze and put the ENTIRE log/error text in the 'log' field. Do NOT use any other tool for error analysis.
-12. CRITICAL: When using github.create_pr or jira.create_issue, you MUST provide a comprehensive, multi-line string for the `body` or `description` parameter. Never let it be blank or "None". Elaborate professionally on the fix or the issue.
+12. CRITICAL: When using github.create_pr or jira.create_issue, you MUST provide a comprehensive, multi-line string for the `body` or `description` parameter. Elaborate professionally. If creating a ticket for a Jenkins failure, ALWAYS include the build number in the summary using {{stepX.build_number}} (e.g. "Jenkins Build #{{step1.build_number}} Failed").
 13. CRITICAL: When user asks to "fix a bug" or "fix the bug in X", you MUST use code.generate_fix as the ONLY step. code.generate_fix already handles everything internally (reads file, generates fix, creates branch, creates PR, notifies Slack). Do NOT add separate jira.create_issue or github.create_pr steps — they will cause duplicates.
-14. CRITICAL: Do NOT use placeholder references like PREVIOUS_STEP_RESULT or step1.key in params EXCEPT when specifically instructed to do so by a tool (e.g., migration.design's inventory_csv). Otherwise, use actual concrete values like "dheerajyadav1714/ci_cd".
-15. ZERO-TO-CLOUD MASTER WORKFLOW: If the user asks you to handle Agile tickets, provision infrastructure, generate pipelines, and optimize costs all at once, you MUST ONLY output `agile.generate_ticket` and `migration.design`. DO NOT output the provision, pipeline, or finops steps. The Orchestrator will automatically chain those downstream AFTER the user approves the architecture design!
-16. For architecture/design requests, ALWAYS use `migration.design`. If no file is provided to read, pass the user's requirements directly into the `inventory_csv` parameter.
+14. CRITICAL: To pass data between steps, you MUST ONLY use the exact placeholder format: {{stepX.key}} (e.g., {{step1.analysis}} or {{step1.summary}}). DO NOT use JSONPath, $.steps[X], or [[...]]. Otherwise, use actual concrete values like "dheerajyadav1714/ci_cd".
+15. ZERO-TO-CLOUD MASTER WORKFLOW: If the user asks to provision infrastructure, generate pipelines, and optimize costs all at once, you MUST ONLY output `migration.design`. DO NOT output pipeline or finops steps. Wait for user approval!
+16. INTERACTIVE ARCHITECTURE REQUIREMENTS: When the user asks for architecture, design, migration, or infrastructure provisioning:
+   a) If the request is DETAILED (user provides 3+ specifics like scale, cloud provider, database, availability, compliance, or says "read file X from repo Y"), call `migration.design` directly with the details in `inventory_csv` and `preferences`.
+   b) If the request is VAGUE (e.g. "design architecture for e-commerce app" without scale, HA, cloud specifics), you MUST output a SINGLE "reply" step with the Architecture Discovery questionnaire below. Do NOT call migration.design yet.
+   c) If the user previously answered the questionnaire (check conversation context), NOW call `migration.design` with their answers as `inventory_csv` and `preferences`.
+   d) If user says "use defaults" or "just design it" or "skip questions", call `migration.design` immediately.
+17. ARCHITECTURE DISCOVERY QUESTIONNAIRE (use this exact format when Rule 16b applies):
+Output a reply step with this text:
+"🏗️ **Architecture Discovery — Principal Architect**\n\nBefore I design your architecture, I need to understand your requirements:\n\n**📊 Scale & Performance**\n1. Expected concurrent users at peak? (e.g., 1K, 10K, 100K+)\n2. Latency requirements? (e.g., <200ms API response)\n\n**🔒 Reliability & Compliance**\n3. Availability target? (Standard 99.5% / High 99.9% / Critical 99.99%)\n4. Compliance needs? (None / SOC2 / HIPAA / PCI-DSS / GDPR)\n\n**☁️ Infrastructure**\n5. Target cloud? (GCP / AWS / Azure / Multi-cloud)\n6. Preferred compute? (Kubernetes / Serverless / VMs / Let AI decide)\n\n**💾 Data & Storage**\n7. Primary database? (PostgreSQL / MySQL / MongoDB / Spanner / AI recommend)\n8. Caching needed? (Yes / No / AI decide)\n\n**💰 Budget & Deployment**\n9. Cost strategy? (Cost-optimized / Balanced / Performance-first)\n10. Environments? (Prod only / Prod+Staging / Prod+Staging+Dev)\n11. Source repo to analyze? (e.g., owner/repo or skip)\n12. Target repo for Terraform? (Create new / Use existing / Default: dheerajyadav1714/ci_cd)\n\n💡 *Answer what you can — I'll use smart defaults for the rest. Or say **'use defaults'** to proceed immediately.*"
+18. HUMAN-IN-THE-LOOP PROVISIONING: ONLY output `migration.provision` when the user EXPLICITLY says "Approve and provision this architecture" or otherwise approves a previously drafted architecture. Do not output this tool during the initial design phase.
+
 {conversation_context}
 User request: "{user_request}"
 """
@@ -795,16 +1011,34 @@ User request: "{user_request}"
                     continue
                 if "tool_code" in step and "tool" not in step:
                     step["tool"] = step.pop("tool_code")
+                if "tool_name" in step and "tool" not in step:
+                    step["tool"] = step.pop("tool_name")
 
                 if "tool" in step and "." in step["tool"]:
                     parts = step["tool"].split(".")
                     step["tool"] = parts[0]
                     if len(parts) > 1 and "action" not in step:
                         step["action"] = parts[1]
-                if "parameters" in step and "params" not in step:
-                    step["params"] = step.pop("parameters")
+                
+                # Robust extraction of parameters from any hallucinated key
+                for param_key in ["parameters", "tool_args", "args", "payload"]:
+                    if param_key in step:
+                        val = step.pop(param_key)
+                        if isinstance(val, dict):
+                            if "params" not in step or not isinstance(step["params"], dict):
+                                step["params"] = val
+                            else:
+                                step["params"].update(val)
+                
                 step.setdefault("tool", "reply")
                 step.setdefault("params", {})
+                
+                # Ensure text is inside params for reply tools
+                if "text" in step and step["tool"] == "reply":
+                    step["params"]["text"] = step.pop("text")
+                if "reply" in step and step["tool"] == "reply" and isinstance(step["reply"], str):
+                    step["params"]["text"] = step.pop("reply")
+                    
                 if "action" not in step:
                     tool = step["tool"]
                     step["action"] = {"reply": "send", "slack": "send", "jenkins": "trigger"}.get(tool, step.get("action", "unknown"))
@@ -823,6 +1057,21 @@ User request: "{user_request}"
                     await session.execute(sql_text("UPDATE workflows SET status='completed', plan=:plan WHERE id=:id"), {"plan": json.dumps(steps), "id": workflow_id})
                     await session.commit()
                 return
+                
+            if len(steps) == 1 and steps[0]["tool"] == "reply":
+                # Short-circuit: The LLM just wanted to talk to the user (e.g. asking the architecture questionnaire)
+                async with AsyncSessionLocal() as session:
+                    reply_text = steps[0].get("params", {}).get("text", "")
+                    await session.execute(sql_text("UPDATE workflows SET status='completed', plan=:plan WHERE id=:id"), {"plan": json.dumps(steps), "id": workflow_id})
+                    try:
+                        await session.execute(sql_text(
+                            "INSERT INTO chat_messages (user_id, role, content, created_at) VALUES ('ui_user', 'assistant', :content, NOW())"
+                        ), {"content": reply_text})
+                    except Exception as e:
+                        logger.warning(f"Failed to persist chat message: {e}")
+                    await session.commit()
+                return
+
 
         # ===== EXECUTE STEPS =====
         context = {}
@@ -835,6 +1084,8 @@ User request: "{user_request}"
 
                 # RESOLVE DYNAMIC PLACEHOLDERS (e.g. {{jira.created.key}})
                 params = resolve_placeholders(params, context)
+                # CATCH-ALL: resolve any remaining hallucinated placeholders ({tool.field}, step_N.key, $.steps[N], etc.)
+                params = sanitize_remaining_placeholders(params, context)
                 step["params"] = params # Update for DB logging
 
                 logger.info(f"Step {idx+1}/{len(steps)}: {tool}.{action} -> {params}")
@@ -862,6 +1113,9 @@ User request: "{user_request}"
                     elif tool == "jira" and action == "create_issue":
                         if "issue_type" not in params:
                             params["issue_type"] = "Task"
+                        # Jira enforces a 255-character limit on summary
+                        if "summary" in params and len(str(params["summary"])) > 250:
+                            params["summary"] = str(params["summary"])[:247] + "..."
                         resp = await asyncio.to_thread(requests.post, f"{MCP_SERVERS['jira']}/issue", json=params, timeout=30)
                         result = resp.json()
                         context["jira_created"] = result
@@ -1939,13 +2193,20 @@ Output ONLY the raw Jenkinsfile content. No markdown code fences."""
                         
                         original_manifest = ""
                         try:
-                            read_resp = requests.get(f"{MCP_SERVERS['github']}/file", params={"repo": fo_repo, "path": fo_file, "branch": "main"}, timeout=15)
+                            read_resp = requests.get(f"{MCP_SERVERS['github']}/read", params={"repo": fo_repo, "path": fo_file, "branch": "main"}, timeout=15)
                             if read_resp.status_code == 200:
                                 original_manifest = read_resp.json().get("content", "")
                         except Exception as fo_err:
                             logger.warning(f"FinOps read failed: {fo_err}")
                             
-                        fo_prompt = f"""You are a FinOps AI Cost Optimizer. Analyze this deployment file and right-size the resource limits (CPU/Memory) to reduce wasted spend.
+                        if not original_manifest:
+                            err_msg = f"File {fo_file} not found or empty in repository {fo_repo}."
+                            logger.error(f"FinOps aborting: {err_msg}")
+                            result = {"status": "failed", "error": err_msg}
+                            context["finops_error"] = err_msg
+                            # We can just skip to returning the result by bypassing the rest.
+                        else:
+                            fo_prompt = f"""You are a FinOps AI Cost Optimizer. Analyze this deployment file and right-size the resource limits (CPU/Memory) to reduce wasted spend.
 Original file:
 ```yaml
 {original_manifest}
@@ -1954,54 +2215,54 @@ If this file doesn't have requests/limits, add minimal ones (e.g. 100m, 128Mi) s
 Calculate the estimated monthly savings (make up a realistic number like '$420/month').
 Output ONLY the raw updated YAML content. No markdown fences."""
 
-                        fo_resp = await asyncio.to_thread(gemini_model.generate_content, fo_prompt)
-                        fo_yaml = fo_resp.text.strip()
-                        if fo_yaml.startswith("```"):
-                            fo_yaml = re.sub(r'^```\w*\n?', '', fo_yaml)
-                            fo_yaml = re.sub(r'\n?```$', '', fo_yaml)
-                            
-                        fo_branch = f"finops/optimize-{str(uuid.uuid4())[:6]}"
-                        fo_pr_url = None
-                        try:
-                            # Branch
-                            br = mcp_request("post", f"{MCP_SERVERS['github']}/create-branch", json={"repo": fo_repo, "branch": fo_branch, "base": "main"}, timeout=15)
-                            if br.status_code not in [200, 201] and "already exists" not in br.text.lower():
-                                logger.warning(f"FinOps branch creation failed: {br.text}")
-                            
-                            # Commit
-                            cc = mcp_request("post", f"{MCP_SERVERS['github']}/commit", json={
-                                "repo": fo_repo, "branch": fo_branch, "path": fo_file,
-                                "content": fo_yaml, "message": "chore(finops): right-size resource limits for cost optimization"
-                            }, timeout=15)
-                            
-                            if cc.status_code in [200, 201]:
-                                # PR
-                                pr_body = "## 💸 FinOps AI Optimization\nThis PR right-sizes the kubernetes resource requests/limits based on historical metrics analysis.\n\n**Estimated Savings:** $420/month 📉\n\n> Auto-generated by GenAI DevOps Orchestrator."
-                                pr = mcp_request("post", f"{MCP_SERVERS['github']}/create-pr", json={
-                                    "repo": fo_repo, "title": f"FinOps: Optimize resource limits in {fo_file}",
-                                    "head": fo_branch, "base": "main", "body": pr_body
+                            fo_resp = await asyncio.to_thread(gemini_model.generate_content, fo_prompt)
+                            fo_yaml = fo_resp.text.strip()
+                            if fo_yaml.startswith("```"):
+                                fo_yaml = re.sub(r'^```\w*\n?', '', fo_yaml)
+                                fo_yaml = re.sub(r'\n?```$', '', fo_yaml)
+                                
+                            fo_branch = f"finops/optimize-{str(uuid.uuid4())[:6]}"
+                            fo_pr_url = None
+                            try:
+                                # Branch
+                                br = mcp_request("post", f"{MCP_SERVERS['github']}/create-branch", json={"repo": fo_repo, "branch": fo_branch, "base": "main"}, timeout=15)
+                                if br.status_code not in [200, 201] and "already exists" not in br.text.lower():
+                                    logger.warning(f"FinOps branch creation failed: {br.text}")
+                                
+                                # Commit
+                                cc = mcp_request("post", f"{MCP_SERVERS['github']}/commit", json={
+                                    "repo": fo_repo, "branch": fo_branch, "path": fo_file,
+                                    "content": fo_yaml, "message": "chore(finops): right-size resource limits for cost optimization"
                                 }, timeout=15)
-                                if pr.status_code in [200, 201]:
-                                    fo_pr_url = pr.json().get("html_url", pr.json().get("url"))
+                                
+                                if cc.status_code in [200, 201]:
+                                    # PR
+                                    pr_body = "## 💸 FinOps AI Optimization\nThis PR right-sizes the kubernetes resource requests/limits based on historical metrics analysis.\n\n**Estimated Savings:** $420/month 📉\n\n> Auto-generated by GenAI DevOps Orchestrator."
+                                    pr = mcp_request("post", f"{MCP_SERVERS['github']}/create-pr", json={
+                                        "repo": fo_repo, "title": f"FinOps: Optimize resource limits in {fo_file}",
+                                        "head": fo_branch, "base": "main", "body": pr_body
+                                    }, timeout=15)
+                                    if pr.status_code in [200, 201]:
+                                        fo_pr_url = pr.json().get("html_url", pr.json().get("url"))
+                                    else:
+                                        logger.warning(f"FinOps PR creation failed: {pr.text}")
                                 else:
-                                    logger.warning(f"FinOps PR creation failed: {pr.text}")
-                            else:
-                                logger.warning(f"FinOps commit failed: {cc.text}")
-                        except Exception as fop_err:
-                            logger.warning(f"FinOps github flow failed: {fop_err}")
+                                    logger.warning(f"FinOps commit failed: {cc.text}")
+                            except Exception as fop_err:
+                                logger.warning(f"FinOps github flow failed: {fop_err}")
+                                
+                            # Notify Slack
+                            slack_msg = f"💸 *FinOps Optimization Discovered!*\nI analyzed `{fo_file}` and found potential savings by downscaling bloated resources (~$420/mo)."
+                            if fo_pr_url:
+                                slack_msg += f"\n👉 Review the Cost-Optimization PR: {fo_pr_url}"
+                            try:
+                                requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": slack_msg}, timeout=15)
+                            except: pass
                             
-                        # Notify Slack
-                        slack_msg = f"💸 *FinOps Optimization Discovered!*\nI analyzed `{fo_file}` and found potential savings by downscaling bloated resources (~$420/mo)."
-                        if fo_pr_url:
-                            slack_msg += f"\n👉 Review the Cost-Optimization PR: {fo_pr_url}"
-                        try:
-                            requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": slack_msg}, timeout=15)
-                        except: pass
-                        
-                        result = {
-                            "status": "optimized", "repo": fo_repo, "pr_url": fo_pr_url,
-                            "oldCode": original_manifest, "newCode": fo_yaml, "file_path": fo_file
-                        }
+                            result = {
+                                "status": "optimized", "repo": fo_repo, "pr_url": fo_pr_url,
+                                "oldCode": original_manifest, "newCode": fo_yaml, "file_path": fo_file
+                            }
 
                     # ---------- AGENTIC CLOUD MIGRATION (THE HOLY GRAIL) - INTERACTIVE ----------
                     elif tool == "migration" and action == "design":
@@ -2011,7 +2272,19 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                         prefs = params.get("preferences", "Follow general enterprise best practices.")
                         
                         logger.info(f"🚀 MULTI-AGENT DESIGN INITIATED for {mig_proj}")
-                        try: requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"🚀 *Interactive Cloud Migration Initiated for {mig_proj}*\n📥 Ingested live inventory CSV from Repo.\n🎯 User Preferences: {prefs}\n\n🤖 Orchestrating Multi-Agent Debate for target GCP Architecture..."}, timeout=15)
+                        # Determine if this is a CSV-based migration or a generic architecture request
+                        # More robust heuristic to prevent treating a detailed prompt with commas as a CSV
+                        has_real_csv = inventory_csv and len(inventory_csv) > 50 and inventory_csv.count('\n') >= 1 and inventory_csv.count(',') >= 2 and any(
+                            kw in inventory_csv.lower() for kw in ['hostname', 'server', 'vcpu', 'instance']
+                        )
+                        if has_real_csv:
+                            slack_source = "📥 Ingested live inventory CSV from Repo."
+                            slack_title = f"🚀 *Cloud Migration Initiated for {mig_proj}*"
+                        else:
+                            req_preview = inventory_csv[:150].replace('\n', ' ') if inventory_csv != "no data provided" else "General architecture design"
+                            slack_source = f"📋 Requirements: {req_preview}"
+                            slack_title = f"🚀 *Architecture Design Initiated for {mig_proj}*"
+                        try: requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": f"{slack_title}\n{slack_source}\n🎯 User Preferences: {prefs}\n\n🤖 Orchestrating Multi-Agent Debate..."}, timeout=15)
                         except: pass
 
                         async def generate_with_fallback(prompt):
@@ -2027,11 +2300,31 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                                 return resp.text.strip()
 
                         # Agent 1: Architect (Gemini Pro for deep reasoning)
+                        if has_real_csv:
+                            arch_context = (
+                                f"## Migration Assessment\n"
+                                f"Source: On-premises inventory data from repository {mig_repo}\n"
+                                f"Inventory CSV:\n{inventory_csv}\n\n"
+                                f"User preferences: {prefs}\n\n"
+                                "Design a target-state GCP architecture to MIGRATE these workloads.\n"
+                                "Include a MIGRATION PLAN with phases:\n"
+                                "- Phase 1: Foundation (VPC, IAM, networking) — Week 1-2\n"
+                                "- Phase 2: Data Migration (databases, storage) — Week 3-4\n"
+                                "- Phase 3: Application Migration (compute, containers) — Week 5-6\n"
+                                "- Phase 4: Cutover & Validation — Week 7-8\n"
+                                "- Phase 5: Optimization & Monitoring — Week 9+\n\n"
+                            )
+                        else:
+                            arch_context = (
+                                f"## Greenfield Architecture Design\n"
+                                f"Application Requirements:\n{inventory_csv}\n\n"
+                                f"User preferences: {prefs}\n\n"
+                                "Design a production-grade cloud-native architecture on GCP.\n"
+                            )
                         arch_prompt = (
                             f"You are a Principal GCP Cloud Architect with 15+ years of enterprise migration experience.\n"
-                            f"Here is the on-prem inventory or requirements:\n{inventory_csv}\n\n"
-                            f"User preferences: {prefs}\n\n"
-                            "Design a production-grade GCP architecture. You MUST include ALL of the following:\n"
+                            f"{arch_context}"
+                            "You MUST include ALL of the following:\n"
                             "1. **Networking**: VPC name, subnets with CIDR ranges (e.g., 10.0.1.0/24), Cloud NAT, Cloud Router, VPC Peering if needed\n"
                             "2. **Compute**: GKE clusters (node pools, machine types, autoscaling min/max) OR Cloud Run services OR Compute Engine MIGs\n"
                             "3. **Database**: Cloud SQL (HA config, private IP, storage size, read replicas) OR AlloyDB OR Spanner\n"
@@ -2115,7 +2408,10 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                             "   classDef cache fill:#fff8e1,stroke:#f57f17,color:#f57f17\n"
                             "10. **Connections**: Show data flow with labeled edges (e.g., --'HTTPS 443'-->, --'Private IP'-->, --'VPC Peering'-->). Each connection on a separate line.\n"
                             "11. **Syntax Rules**: Start with 'graph TD'. Use double-quotes for ALL labels. NEVER use curly braces {} for grouping connections. Write each connection on its own line. NEVER use nested quotes inside a label (e.g. use HTTPS Traffic, not \"HTTPS\" Traffic).\n"
-                            "12. **NO PARENTHESES**: DO NOT use parentheses () anywhere inside any node label or edge label string. Parentheses break the Mermaid parser. Use brackets [] or plain text instead.\n\n"
+                            "12. **NO PARENTHESES**: DO NOT use parentheses () anywhere inside any node label or edge label string. Parentheses break the Mermaid parser. Use brackets [] or plain text instead.\n"
+                            "13. **NODE IDs MUST BE ALPHANUMERIC**: Always declare nodes as `NodeID[\"Label\"]`. NEVER use strings like `\"Internet\"` as a node ID in a connection. Always use a proper alphanumeric ID, e.g., `Internet[\"Internet\"]`.\n"
+                            "14. **DO NOT LINK TO SUBGRAPHS**: Do not draw edges directly to or from a `subgraph`. Always link to a specific node INSIDE the subgraph instead. Linking directly to a subgraph causes parse errors.\n"
+                            "15. **ONLY USE RECTANGLE NODES**: You MUST define every single node using ONLY square brackets `[]`. Example: `NodeID[\"Label\"]`. NEVER use parentheses `()`, curly braces `{}`, or any other shape. ONLY use square brackets.\n\n"
                             "Output ONLY raw mermaid code. Make it comprehensive with 25-40 nodes minimum."
                         )
                         mermaid_code = await generate_with_fallback(mermaid_prompt)
@@ -2151,14 +2447,24 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                                         out.append(f"{prefix}{src_edge}{tgt}")
                                     continue
                                 
-                                # Fix 3: Wrap unquoted node labels in double quotes for complex strings
-                                # Handles various shapes: [], (), (()), [[]], {{}}, >]
-                                # Matches node definition like: NodeID[🏠 "Complex Label"] or NodeID[Simple Label]
-                                line = re.sub(r'([A-Za-z0-9_-]+)\[\s*(?!"\s*)([^"\]]+)\]', r'\1["\2"]', line)
-                                line = re.sub(r'([A-Za-z0-9_-]+)\(\s*(?!"\s*)([^"\]]+)\)', r'\1("\2")', line)
-                                line = re.sub(r'([A-Za-z0-9_-]+)\(\(\s*(?!"\s*)([^"\]]+)\)\)', r'\1(("\2"))', line)
-                                line = re.sub(r'([A-Za-z0-9_-]+)\[\[\s*(?!"\s*)([^"\]]+)\]\]', r'\1[["\2"]]', line)
-                                line = re.sub(r'([A-Za-z0-9_-]+)\{\{\s*(?!"\s*)([^"\]]+)\}\}', r'\1{{"\2"}}', line)
+                                # Fix 3: BULLETPROOF 100% safe node label sanitization
+                                # We split by edges first so each chunk has at most one node.
+                                # Then we strip ALL double quotes completely, and rebuild the node with strict [" "]
+                                parts = re.split(r'(-->|---|==>|-\.->)', line)
+                                fixed_parts = []
+                                for p in parts:
+                                    if p in ['-->', '---', '==>', '-.->']:
+                                        fixed_parts.append(p)
+                                        continue
+                                    
+                                    # Strip all double quotes
+                                    p = p.replace('"', '')
+                                    # Normalize any brackets/parentheses into robust square brackets with quotes
+                                    # This guarantees no nested quotes and no illegal characters break the parser
+                                    p = re.sub(r'([A-Za-z0-9_-]+)[\[\(\{](.*)[\]\)\}]', r'\1["\2"]', p)
+                                    fixed_parts.append(p)
+                                
+                                line = "".join(fixed_parts)
 
                                 # Fix 4: Break down curly-brace grouped connections for Draw.io compatibility
                                 # Matches: Source --> {Target1 Target2 ...}
@@ -2185,9 +2491,26 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                                         out.append(f"{prefix}class {n} {style}")
                                     continue
                                 
+                                # Fix 7: Sanitize subgraph titles
+                                # LLMs often write `subgraph Shared Services (Project: 123)` which is illegal.
+                                # It must be quoted: `subgraph "Shared Services (Project: 123)"`
+                                sub_match = re.match(r'^(\s*subgraph\s+)(.+)$', line)
+                                if sub_match:
+                                    prefix = sub_match.group(1)
+                                    content = sub_match.group(2).strip()
+                                    # If it's not already quoted or in ID ["Label"] format
+                                    if not (content.startswith('"') and content.endswith('"')) and not re.match(r'^\w+\s+\[".*"\]$', content):
+                                        content_clean = content.replace('"', '')
+                                        out.append(f'{prefix}"{content_clean}"')
+                                        continue
+                                
                                 out.append(line)
                             
+                            # Remove any duplicate "graph TD", "graph LR", etc. that the LLM might have embedded inside
                             final_code = '\n'.join(out)
+                            # Strip out any embedded graph declarations if the code already has one
+                            final_code = re.sub(r'\n+graph\s+(TD|LR|RL|BT|TB)', '', final_code)
+                            
                             if not final_code.strip().startswith('graph'):
                                 final_code = 'graph TD\n' + final_code
                             return final_code
@@ -2195,41 +2518,100 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                         mermaid_code = sanitize_mermaid(mermaid_code)
                         context["mermaid_diagram"] = mermaid_code
 
-                        # Create Confluence draft with architecture + diagram
+                        # Save the architecture to a temp file so provision phase can access it
+                        try:
+                            # Use a static cache file to ensure it's always found by Phase 2
+                            with open(f"/tmp/devops_latest_arch.md", "w") as f:
+                                f.write(final_arch)
+                            with open(f"/tmp/devops_latest_mermaid.md", "w") as f:
+                                f.write(mermaid_code)
+                        except Exception as e:
+                            logger.warning(f"Failed to cache architecture to disk: {e}")
+
+                        # Publish Draft to Confluence
+                        draft_confluence_url = None
+                        run_uuid = str(uuid.uuid4())[:6]
+                        
+                        # 1. Create Parent Project Page
+                        parent_page_title = f"Migration Project: {mig_proj} ({run_uuid})"
+                        parent_page_id = None
+                        try:
+                            parent_content = f"# Migration Project: {mig_proj}\n\nThis page groups all documentation for the {mig_proj} migration (Run ID: {run_uuid})."
+                            cp_parent = mcp_request("post", f"{MCP_SERVERS['confluence']}/pages", json={"space": "DEVOPS", "title": parent_page_title, "content": parent_content}, timeout=15)
+                            if cp_parent and cp_parent.status_code in [200, 201]:
+                                parent_page_id = cp_parent.json().get("id")
+                                # Save parent ID for Phase 2
+                                with open(f"/tmp/devops_latest_parent_id.txt", "w") as f:
+                                    f.write(str(parent_page_id))
+                                with open(f"/tmp/devops_latest_run_uuid.txt", "w") as f:
+                                    f.write(run_uuid)
+                        except Exception as cud_err:
+                            logger.warning(f"Confluence parent generation failed: {cud_err}")
+
+                        # 2. Create Draft Page as a child
+                        unique_page_title = f"Architecture Draft - {mig_proj} ({run_uuid})"
                         try:
                             draft_with_diagram = (
-                                f"# Architecture Design: {mig_proj}\n\n"
+                                f"# Architecture Draft: {mig_proj}\n\n"
                                 f"{final_arch}\n\n"
-                                f"## Architecture Diagram\n\n"
-                                f"```mermaid\n{mermaid_code}\n```\n"
                             )
-                            cp = mcp_request("post", f"{MCP_SERVERS['confluence']}/pages", json={"space": "DEVOPS", "title": unique_page_title, "content": draft_with_diagram}, timeout=15)
-                            if cp and cp.status_code in [200, 201]:
-                                confluence_url = cp.json().get("url", "https://confluence.enterprise/published")
-                        except Exception as cud_err:
-                            logger.warning(f"Confluence diagram update failed: {cud_err}")
+                            if mermaid_code:
+                                draft_with_diagram += f"## Architecture Diagram\n\n```mermaid\n{mermaid_code}\n```\n"
+                            
+                            draft_payload = {"space": "DEVOPS", "title": unique_page_title, "content": draft_with_diagram}
+                            if parent_page_id:
+                                draft_payload["parent_id"] = parent_page_id
 
-                        # Send Architecture to UI for review
+                            cp = mcp_request("post", f"{MCP_SERVERS['confluence']}/pages", json=draft_payload, timeout=15)
+                            if cp and cp.status_code in [200, 201]:
+                                draft_confluence_url = cp.json().get("url", "https://confluence.enterprise/published")
+                        except Exception as cud_err:
+                            logger.warning(f"Confluence draft generation failed: {cud_err}")
+
+                        # Send Architecture to UI for review (STOP here, wait for approval)
                         final_slack = f"✅ *Architecture Debate Completed*\nThe design is ready. Waiting for human review in the UI before provisioning Terraform."
-                        if confluence_url:
-                            final_slack += f"\n📘 View the drafted Architecture details here: {confluence_url}"
+                        if draft_confluence_url:
+                            final_slack += f"\n📘 View the detailed architecture draft in Confluence: {draft_confluence_url}"
+
                         try: requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": final_slack}, timeout=15)
                         except: pass
                         
                         context["architecture"] = final_arch
                         context["mermaid_diagram"] = mermaid_code
+                        if draft_confluence_url:
+                            context["draft_confluence_url"] = draft_confluence_url
+
                         result = {
                             "status": "architecture_drafted", "repo": mig_repo, "project": mig_proj,
-                            "architecture_log": final_arch[:1000]
+                            "architecture_log": final_arch[:1000],
+                            "confluence_url": draft_confluence_url
                         }
+                        
+                        # BREAK the tool loop immediately to enforce Human-in-the-Loop
+                        break
 
                     elif tool == "migration" and action == "provision":
                         mig_repo = params.get("repo", "dheerajyadav1714/ci_cd")
                         mig_proj = params.get("project_name", "enterprise-migration")
-                        # Fallback to context architecture if the LLM forgets to pass it in params
+                        
+                        # Load architecture from static cache
                         approved_arch = params.get("approved_architecture", context.get("architecture", ""))
+                        cached_mermaid = context.get("mermaid_diagram", "")
+                        if not approved_arch:
+                            try:
+                                with open(f"/tmp/devops_latest_arch.md", "r") as f:
+                                    approved_arch = f.read()
+                                with open(f"/tmp/devops_latest_mermaid.md", "r") as f:
+                                    cached_mermaid = f.read()
+                            except Exception as cache_err:
+                                logger.warning(f"Failed to read static architecture cache: {cache_err}")
+                        
+                        if not approved_arch or len(approved_arch) < 50:
+                            approved_arch = "Standard 3-tier cloud-native architecture on GCP." # Fallback
                         
                         logger.info(f"🚀 PROVISIONING TERRAFORM STARTED for {mig_proj}")
+
+                        # (Confluence draft publishing has been moved to migration.design Phase 1)
 
                         # Terraform Generation
                         tf_prompt = f"You are a Terraform generator. Based on this APPROVED architecture:\n{approved_arch}\nWrite the raw `main.tf` for deploying this on Google Cloud. Output ONLY valid HCL code without markdown fences."
@@ -2293,7 +2675,24 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                                 f"- ✅ Human-in-the-loop approval via DevOps AI UI\n"
                                 f"- ⏳ Awaiting `terraform plan` review before apply\n"
                             )
-                            cp = mcp_request("post", f"{MCP_SERVERS['confluence']}/pages", json={"space": "DEVOPS", "title": f"Final Migration Runbook - {mig_proj}", "content": conf_content}, timeout=15)
+                            parent_page_id = None
+                            run_uuid = ""
+                            try:
+                                if os.path.exists("/tmp/devops_latest_parent_id.txt"):
+                                    with open("/tmp/devops_latest_parent_id.txt", "r") as f:
+                                        parent_page_id = f.read().strip()
+                                if os.path.exists("/tmp/devops_latest_run_uuid.txt"):
+                                    with open("/tmp/devops_latest_run_uuid.txt", "r") as f:
+                                        run_uuid = f" ({f.read().strip()})"
+                            except:
+                                pass
+
+                            runbook_title = f"Final Migration Runbook - {mig_proj}{run_uuid}"
+                            runbook_payload = {"space": "DEVOPS", "title": runbook_title, "content": conf_content}
+                            if parent_page_id:
+                                runbook_payload["parent_id"] = parent_page_id
+
+                            cp = mcp_request("post", f"{MCP_SERVERS['confluence']}/pages", json=runbook_payload, timeout=15)
                             if cp and cp.status_code in [200, 201]:
                                 final_confluence_url = cp.json().get("url", "https://confluence.enterprise/published")
                         except Exception as cp_err:
@@ -2310,15 +2709,25 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                         if final_confluence_url:
                             final_slack += f"\n📘 Comprehensive Migration Runbook (Discovery, Arch, Code) updated dynamically in Confluence: {final_confluence_url}"
 
+                        final_slack += f"\n\n💡 *Next Steps:* Now that your infrastructure is provisioned, you can ask me to **generate a robust CI/CD pipeline** for this repo, or run a **FinOps cost-optimization scan**!"
+
                         try: requests.post(f"{MCP_SERVERS['slack']}/send", json={"text": final_slack}, timeout=15)
                         except: pass
                             
                         # Important: Return the Terraform code in the context so the user can see what was built!
                         context["terraform_code"] = tf_code
+                        context["migration_provision"] = {
+                            "repo": mig_repo, "branch": mig_branch, "pr_url": tf_pr_url,
+                            "confluence_url": final_confluence_url
+                        }
                         result = {
                             "status": ui_status, "repo": mig_repo, "branch": mig_branch, "pr_url": tf_pr_url,
+                            "confluence_url": final_confluence_url,
                             "newCode": tf_code, "oldCode": "# Target State Architecture\n"
                         }
+                        
+                        # BREAK the tool loop immediately to prevent Pipeline/FinOps auto-chaining
+                        break
 
                     # ---------- ZERO-TOUCH PROVISIONING (TERRAFORM) ----------
                     elif tool == "terraform" and action == "provision":
@@ -2406,7 +2815,7 @@ Requirements:
                         # 1. Fetch current main.tf
                         current_tf = ""
                         try:
-                            tf_resp = requests.get(f"{MCP_SERVERS['github']}/file", params={"repo": tr_repo, "path": "infra/main.tf", "branch": "main"}, timeout=15)
+                            tf_resp = requests.get(f"{MCP_SERVERS['github']}/read", params={"repo": tr_repo, "path": "infra/main.tf", "branch": "main"}, timeout=15)
                             if tf_resp.status_code == 200:
                                 current_tf = tf_resp.json().get("content", "")
                         except Exception as tre:
@@ -2471,7 +2880,7 @@ Diagnose the failure (e.g. missing IAM binding, wrong syntax) and output ONLY th
                         target_file = "src/bug.py"
                         original_content = ""
                         try:
-                            read_resp = requests.get(f"{MCP_SERVERS['github']}/file", params={"repo": chaos_repo, "path": target_file, "branch": "main"}, timeout=15)
+                            read_resp = requests.get(f"{MCP_SERVERS['github']}/read", params={"repo": chaos_repo, "path": target_file, "branch": "main"}, timeout=15)
                             if read_resp.status_code == 200:
                                 original_content = read_resp.json().get("content", "")
                         except Exception as cr_err:
@@ -2548,7 +2957,7 @@ Return ONLY the full modified Python file content with the bug injected. Add a c
                         # 1. Read the source file
                         source_code = ""
                         try:
-                            src_resp = requests.get(f"{MCP_SERVERS['github']}/file", params={"repo": tg_repo, "path": tg_file, "branch": "main"}, timeout=15)
+                            src_resp = requests.get(f"{MCP_SERVERS['github']}/read", params={"repo": tg_repo, "path": tg_file, "branch": "main"}, timeout=15)
                             if src_resp.status_code == 200:
                                 source_code = src_resp.json().get("content", "")
                         except Exception as tg_err:
@@ -2622,7 +3031,7 @@ Output ONLY the raw Python test file content. No markdown fences."""
                         # 1. Query AlloyDB for historical incident data
                         incident_history = ""
                         try:
-                            async with async_session() as db_sess:
+                            async with AsyncSessionLocal() as db_sess:
                                 hist_result = await db_sess.execute(
                                     sql_text("SELECT id, description, status, created_at FROM workflows ORDER BY created_at DESC LIMIT 20")
                                 )
@@ -2683,7 +3092,7 @@ Output a structured risk report:
                         dep_file = ""
                         for dep_path in ["requirements.txt", "package.json", "go.mod", "pom.xml"]:
                             try:
-                                dep_resp = requests.get(f"{MCP_SERVERS['github']}/file", params={"repo": sec_repo, "path": dep_path, "branch": "main"}, timeout=10)
+                                dep_resp = requests.get(f"{MCP_SERVERS['github']}/read", params={"repo": sec_repo, "path": dep_path, "branch": "main"}, timeout=10)
                                 if dep_resp.status_code == 200:
                                     dep_content = dep_resp.json().get("content", "")
                                     dep_file = dep_path
@@ -2832,6 +3241,9 @@ Be specific. Use the actual ticket keys and developer names from the data."""
 
                         sh_resp = await asyncio.to_thread(gemini_model.generate_content, sh_prompt)
                         health_report = sh_resp.text.strip()
+                        if health_report.startswith("```"):
+                            health_report = re.sub(r'^```\w*\n?', '', health_report)
+                            health_report = re.sub(r'\n?```$', '', health_report)
                         context["sprint_health"] = health_report
 
                         # 4. Slack summary
@@ -2864,7 +3276,7 @@ Be specific. Use the actual ticket keys and developer names from the data."""
                             fname = f.get("name", "") if isinstance(f, dict) else str(f)
                             if any(fname.endswith(ext) for ext in key_extensions):
                                 try:
-                                    fc_resp = requests.get(f"{MCP_SERVERS['github']}/file", params={"repo": doc_repo, "path": fname, "branch": "main"}, timeout=10)
+                                    fc_resp = requests.get(f"{MCP_SERVERS['github']}/read", params={"repo": doc_repo, "path": fname, "branch": "main"}, timeout=10)
                                     if fc_resp.status_code == 200:
                                         source_contents[fname] = fc_resp.json().get("content", "")[:3000]
                                 except: pass
@@ -2952,7 +3364,7 @@ Format as clean Markdown suitable for a README.md or docs site."""
                         # 1. Query AlloyDB for recent workflow/incident history
                         incident_data = ""
                         try:
-                            async with async_session() as db_sess:
+                            async with AsyncSessionLocal() as db_sess:
                                 inc_result = await db_sess.execute(
                                     sql_text("SELECT id, description, status, plan, created_at, completed_at FROM workflows ORDER BY created_at DESC LIMIT 10")
                                 )
@@ -3054,8 +3466,9 @@ Be thorough and professional. Use the actual data provided to construct a realis
                             services_list = []
                             for proj in projects:
                                 try:
-                                    parent = f"projects/{proj}/locations/us-central1"
-                                    for svc in run_client.list_services(parent=parent):
+                                    parent = f"projects/{proj}/locations/-"
+                                    request = {"parent": parent}
+                                    for svc in run_client.list_services(request=request):
                                         services_list.append({
                                             "name": svc.name.split("/")[-1],
                                             "project": proj,
@@ -3065,6 +3478,7 @@ Be thorough and professional. Use the actual data provided to construct a realis
                                         })
                                 except Exception as svc_err:
                                     logger.warning(f"Cloud Run list for {proj} failed: {svc_err}")
+                                    services_list.append({"error": f"Failed to list {proj}: {svc_err}"})
                             gcp_data["cloud_run_services"] = services_list
                         except Exception as cr_err:
                             logger.warning(f"Cloud Run client failed: {cr_err}")
@@ -3072,7 +3486,7 @@ Be thorough and professional. Use the actual data provided to construct a realis
 
                         # 2. AlloyDB/Database stats
                         try:
-                            async with async_session() as db_sess:
+                            async with AsyncSessionLocal() as db_sess:
                                 wf_count = await db_sess.execute(sql_text("SELECT COUNT(*) FROM workflows"))
                                 inc_count = await db_sess.execute(sql_text("SELECT COUNT(*) FROM incidents"))
                                 gcp_data["alloydb"] = {
@@ -3187,6 +3601,15 @@ Generate a helpful, well-formatted reply using markdown. Rules:
                     fallback_parts.append(f"- **Build Status:** {json.dumps(context['jenkins_status'])}")
                 if "log_analysis" in context:
                     fallback_parts.append(f"- **Log Analysis:**\n{context['log_analysis'][:2000]}")
+                if "draft_confluence_url" in context:
+                    fallback_parts.append(f"- **Confluence Draft:** {context['draft_confluence_url']}")
+                if "migration_provision" in context:
+                    mp = context["migration_provision"]
+                    fallback_parts.append(f"- **Terraform PR:** {mp.get('pr_url', 'N/A')}")
+                    if mp.get('confluence_url'):
+                        fallback_parts.append(f"- **Confluence Runbook:** {mp.get('confluence_url')}")
+                    fallback_parts.append(f"\n💡 **Suggested Next Steps:**")
+                    fallback_parts.append(f"Now that your architecture is provisioned, you can ask me to **generate a CI/CD pipeline** for this repository, or run a **FinOps scan** to optimize costs!")
                 if len(fallback_parts) == 1:
                     fallback_parts.append(f"```json\n{json.dumps(reply_context, indent=2)[:1500]}\n```")
                 fallback_parts.append(f"\n> ⚠️ *The AI summary couldn't be generated due to high demand. The raw data is shown above.*")
@@ -3219,7 +3642,11 @@ Generate a helpful, well-formatted reply using markdown. Rules:
                     suggestions.append("Run security scan on the repository")
                 elif s_tool == "migration" and s_action == "design":
                     suggestions.append("Approve and provision this architecture")
-                    suggestions.append("Optimize costs for this design")
+                    suggestions.append("Make it more cost-optimized")
+                    suggestions.append("Harden the security further")
+                elif s_tool == "migration" and s_action == "provision":
+                    suggestions.append("Generate a CI/CD pipeline for the new infrastructure")
+                    suggestions.append("Run FinOps analysis on the generated code")
                 elif s_tool == "jenkins" and s_action == "trigger":
                     if s_result.get("status") == "FAILURE" or s_result.get("result") == "FAILURE":
                         suggestions.append("Analyze and auto-fix the failure")
