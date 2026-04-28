@@ -51,7 +51,7 @@ const agents = [
       { icon: '🔮', text: 'Predict deployment risks from historical data' },
       { icon: '🔔', text: 'Slack notifications for incidents & resolutions' },
     ],
-    example: 'Analyze the latest Jenkins build failure and fix the bugs',
+    example: 'Analyze the latest Jenkins build failure and fix the issue',
   },
   {
     id: 'finops', name: 'FinOps Director', tagline: 'Optimize • Rightsize • Save',
