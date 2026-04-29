@@ -5,41 +5,41 @@ import ReactDiffViewer from 'react-diff-viewer-continued';
 
 // ─── Mermaid Sanitizer ──────────────────────────────────────────────────────
 function sanitizeMermaid(raw) {
-  // Process line by line for better control
   const lines = raw.split('\n');
   const sanitized = lines.map(line => {
     let l = line;
 
-    // === FIX 1: Nested quotes + brackets inside node labels ===
-    // Gemini generates: NodeId["text <br>"inner [stuff"]"]
-    // Should be:        NodeId["text <br> inner stuff"]
-    // Strategy: find ["..."] blocks and clean their insides
-    l = l.replace(/\["((?:[^"]|"")*?)"\]/g, (match, content) => {
-      // If content has no issues, return as-is
-      if (!content.includes('"') && !content.includes('[')) return match;
-      // Clean inner quotes and brackets
-      let clean = content.replace(/"/g, '').replace(/\[/g, '(').replace(/\]/g, ')');
-      return `["${clean}"]`;
-    });
+    // FIX 0: Subgraph titles with parentheses / special chars
+    // "subgraph prj-hc-security-987654 (Shared Security Project)" → quoted
+    const subMatch = l.match(/^(\s*subgraph\s+)(.+)$/);
+    if (subMatch) {
+      const prefix = subMatch[1];
+      let content = subMatch[2].trim();
+      if (!(content.startsWith('"') && content.endsWith('"'))) {
+        if (/[()[\]{}:]/.test(content)) {
+          content = content.replace(/"/g, '').replace(/[()]/g, '- ').replace(/[[\]{}]/g, '').replace(/\s+/g, ' ').trim();
+          return `${prefix}"${content}"`;
+        }
+      }
+      return l;
+    }
 
-    // === FIX 2: Catch broken patterns like ["text "more [x"]"] ===
-    // Match node definitions with mismatched quotes/brackets
-    l = l.replace(/(\w+)\["([^"]*)"([^"]*)\[([^\]]*)"?\]"?\]/g, (match, id, p1, p2, p3) => {
-      const clean = `${p1} ${p2}${p3}`.replace(/\s+/g, ' ').trim();
+    // FIX 1: Node labels with nested quotes/brackets
+    // NodeId["text <br>"inner [stuff"]"] → NodeId["text <br> inner stuff"]
+    l = l.replace(/(\w+)\["((?:[^"]*"?)*?)"\]/g, (match, id, content) => {
+      if (!content.includes('"') && !content.includes('[')) return match;
+      let clean = content.replace(/"/g, '').replace(/\[/g, ' - ').replace(/\]/g, '');
+      clean = clean.replace(/\s+/g, ' ').trim();
       return `${id}["${clean}"]`;
     });
 
-    // === FIX 3: Edge label syntax ===
-    // A --- "label" --- B  ->  A ---|"label"| B
+    // FIX 2: Edge label syntax
     l = l.replace(/(\S+)\s*---\s*"([^"]+)"\s*---\s*(\S+)/g, '$1 ---|"$2"| $3');
-    // A --- "label" --> B  ->  A -->|"label"| B
     l = l.replace(/(\S+)\s*---\s*"([^"]+)"\s*-->\s*(\S+)/g, '$1 -->|"$2"| $3');
-    // A -- "label" --- B  ->  A ---|"label"| B
     l = l.replace(/(\S+)\s*--\s*"([^"]+)"\s*---\s*(\S+)/g, '$1 ---|"$2"| $3');
-    // A --- 'label' --- B (single quotes)
     l = l.replace(/(\S+)\s*---\s*'([^']+)'\s*---\s*(\S+)/g, '$1 ---|"$2"| $3');
 
-    // === FIX 4: Unquoted parens in simple [...] labels ===
+    // FIX 3: Unquoted parens in simple [...] labels
     l = l.replace(/\[([^\]"]*\([^\]]*\)[^\]"]*)\]/g, (match, inner) => {
       if (inner.startsWith('"') && inner.endsWith('"')) return match;
       return `["${inner}"]`;
@@ -49,7 +49,6 @@ function sanitizeMermaid(raw) {
   });
   return sanitized.join('\n');
 }
-
 
 // ─── Mermaid Renderer ───────────────────────────────────────────────────────
 function MermaidDiagram({ code }) {
@@ -98,7 +97,11 @@ function MermaidDiagram({ code }) {
           setError(null);
         }
       } catch (e) {
-        if (!cancelled) setError(e.message || 'Diagram render error');
+        // On any parse error, auto-switch to code view (no ugly error during demo)
+        if (!cancelled) {
+          setError(e.message || 'Diagram render error');
+          setViewMode('code');
+        }
       }
     }
     render();

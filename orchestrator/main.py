@@ -2448,20 +2448,40 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                             lines = code.split('\n')
                             out = []
                             for line in lines:
-                                # Fix 1: Remove literal \n sequences in classDef / style lines
+                                # Fix 1: Remove literal \\n sequences in classDef / style lines
                                 line = line.replace('\\n', ' ')
                                 
-                                # Fix 2: Strip parentheses and nested quotes from edge labels
-                                # E.g., LB -- "HTTP("S") Traffic" --> CA_WA becomes LB -- "HTTPS Traffic" --> CA_WA
+                                # Fix 2: Sanitize subgraph titles FIRST (highest priority)
+                                # LLMs write: subgraph prj-hc-security-987654 (Shared Security Project)
+                                # Must be: subgraph sg1["prj-hc-security-987654 - Shared Security Project"]
+                                sub_match = re.match(r'^(\s*subgraph\s+)(.+)$', line)
+                                if sub_match:
+                                    prefix = sub_match.group(1)
+                                    content = sub_match.group(2).strip()
+                                    # Already properly quoted
+                                    if content.startswith('"') and content.endswith('"'):
+                                        out.append(line)
+                                        continue
+                                    # Has parentheses — always dangerous, must quote
+                                    if '(' in content or ')' in content:
+                                        content_clean = content.replace('"', '').replace('(', '- ').replace(')', '')
+                                        out.append(f'{prefix}"{content_clean.strip()}"')
+                                        continue
+                                    # Has special chars that could break parsing
+                                    if any(c in content for c in ['[', ']', '{', '}', ':']):
+                                        content_clean = content.replace('"', '').replace('[', '').replace(']', '').replace('{', '').replace('}', '')
+                                        out.append(f'{prefix}"{content_clean.strip()}"')
+                                        continue
+                                    out.append(line)
+                                    continue
+
+                                # Fix 3: Clean edge labels with parentheses/nested quotes
                                 def clean_edge(m):
-                                    # m.group(0) is the entire '-- "label" -->' or '-- label -->' string
-                                    # We just strip (, ) and " from the inside
                                     inside = m.group(1).replace('"', '').replace('(', '').replace(')', '')
                                     return f'-- "{inside}" -->'
                                 line = re.sub(r'--\s*"?([^"-]+)"?\s*-->', clean_edge, line)
 
-                                # Fix 3: Expand comma-separated targets in edge lines
-                                # Matches: A --> B, C, D  or  A -- "label" --> B, C
+                                # Fix 4: Expand comma-separated targets
                                 edge_multi = re.match(r'^(\s*)([\w\[\](){}"\'-]+\s*(?:--[>\-]*\s*(?:"[^"]*"\s*)?-->\s*|-->|---)\s*)([\w\[\](){}"\']+(?:\s*,\s*[\w\[\](){}"\']+)+)\s*$', line)
                                 if edge_multi:
                                     prefix = edge_multi.group(1)
@@ -2471,27 +2491,25 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                                         out.append(f"{prefix}{src_edge}{tgt}")
                                     continue
                                 
-                                # Fix 3: BULLETPROOF 100% safe node label sanitization
-                                # We split by edges first so each chunk has at most one node.
-                                # Then we strip ALL double quotes completely, and rebuild the node with strict [" "]
-                                parts = re.split(r'(-->|---|==>|-\.->)', line)
-                                fixed_parts = []
-                                for p in parts:
-                                    if p in ['-->', '---', '==>', '-.->']:
-                                        fixed_parts.append(p)
-                                        continue
-                                    
-                                    # Strip all double quotes
-                                    p = p.replace('"', '')
-                                    # Normalize any brackets/parentheses into robust square brackets with quotes
-                                    # This guarantees no nested quotes and no illegal characters break the parser
-                                    p = re.sub(r'([A-Za-z0-9_-]+)[\[\(\{](.*)[\]\)\}]', r'\1["\2"]', p)
-                                    fixed_parts.append(p)
+                                # Fix 5: Sanitize node labels — handle nested quotes and brackets
+                                # Pattern: NodeId["text "nested [brackets"]"] → NodeId["text nested brackets"]
+                                def fix_node_label(m):
+                                    node_id = m.group(1)
+                                    full_label = m.group(2)
+                                    # Remove ALL inner quotes, replace brackets with dashes
+                                    clean = full_label.replace('"', '').replace('[', ' - ').replace(']', '')
+                                    # Collapse multiple spaces
+                                    clean = re.sub(r'\s+', ' ', clean).strip()
+                                    return f'{node_id}["{clean}"]'
                                 
-                                line = "".join(fixed_parts)
+                                # Match NodeId followed by ["...anything complex..."]
+                                # This regex captures the node ID and everything between the outermost [ ]
+                                line = re.sub(r'(\w+)\["((?:[^"]|"(?!\]))*)"?\]', fix_node_label, line)
 
-                                # Fix 4: Break down curly-brace grouped connections for Draw.io compatibility
-                                # Matches: Source --> {Target1 Target2 ...}
+                                # Fix 6: --- "label" --- syntax → ---|"label"|
+                                line = re.sub(r'(\S+)\s*---\s*"([^"]+)"\s*---\s*(\S+)', r'\1 ---|"\2"| \3', line)
+
+                                # Fix 7: Break down curly-brace grouped connections
                                 brace_match = re.search(r'^(\s*)(\S+)(\s*--[>\-]*\s*(?:"[^"]*"\s*)?-->\s*|-->|---)\s*\{([^{}]+)\}\s*$', line)
                                 if brace_match:
                                     prefix, source, edge, targets_raw = brace_match.groups()
@@ -2500,12 +2518,7 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                                         out.append(f"{prefix}{source}{edge}{t}")
                                     continue
                                 
-                                # Fix 5: Ensure node IDs with reserved words or special chars are handled
-                                # (Generic catch-all for remaining unquoted labels)
-                                line = re.sub(r'([A-Za-z0-9_-]+)>\s*(?!"\s*)([^"\]]+)\]', r'\1>"\2"]', line)
-
-                                # Fix 6: Break down multi-node class assignments for Draw.io compatibility
-                                # Matches: class A, B, C net
+                                # Fix 8: Break down multi-node class assignments
                                 class_multi = re.match(r'^(\s*)class\s+([\w\s,]+)\s+(\w+)\s*$', line)
                                 if class_multi:
                                     prefix = class_multi.group(1)
@@ -2515,24 +2528,10 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                                         out.append(f"{prefix}class {n} {style}")
                                     continue
                                 
-                                # Fix 7: Sanitize subgraph titles
-                                # LLMs often write `subgraph Shared Services (Project: 123)` which is illegal.
-                                # It must be quoted: `subgraph "Shared Services (Project: 123)"`
-                                sub_match = re.match(r'^(\s*subgraph\s+)(.+)$', line)
-                                if sub_match:
-                                    prefix = sub_match.group(1)
-                                    content = sub_match.group(2).strip()
-                                    # If it's not already quoted or in ID ["Label"] format
-                                    if not (content.startswith('"') and content.endswith('"')) and not re.match(r'^\w+\s+\[".*"\]$', content):
-                                        content_clean = content.replace('"', '')
-                                        out.append(f'{prefix}"{content_clean}"')
-                                        continue
-                                
                                 out.append(line)
                             
-                            # Remove any duplicate "graph TD", "graph LR", etc. that the LLM might have embedded inside
+                            # Remove any duplicate "graph TD" embedded inside
                             final_code = '\n'.join(out)
-                            # Strip out any embedded graph declarations if the code already has one
                             final_code = re.sub(r'\n+graph\s+(TD|LR|RL|BT|TB)', '', final_code)
                             
                             if not final_code.strip().startswith('graph'):
