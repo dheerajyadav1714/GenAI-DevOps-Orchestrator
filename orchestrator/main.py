@@ -2288,19 +2288,27 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                         except: pass
 
                         async def generate_with_fallback(prompt):
-                            """Call Gemini Pro with robust retry + Flash fallback with retry for 429s"""
+                            """Call Gemini Pro with robust retry + Flash fallback with retry"""
                             # Try Pro first with retries
                             for attempt in range(3):
                                 try:
                                     resp = await asyncio.wait_for(
                                         asyncio.to_thread(gemini_pro.generate_content, prompt),
-                                        timeout=60.0
+                                        timeout=120.0
                                     )
                                     return resp.text.strip()
-                                except (Exception, asyncio.TimeoutError) as e:
+                                except asyncio.TimeoutError:
+                                    if attempt < 2:
+                                        wait_time = 5 * (attempt + 1)
+                                        logger.warning(f"gemini_pro timeout on attempt {attempt+1}/3, waiting {wait_time}s")
+                                        await asyncio.sleep(wait_time)
+                                    else:
+                                        logger.warning(f"gemini_pro timed out 3x, falling back to gemini_flash")
+                                        break
+                                except Exception as e:
                                     err_str = str(e)
                                     if attempt < 2 and ("429" in err_str or "Resource exhausted" in err_str):
-                                        wait_time = 10 * (attempt + 1)  # 10s, 20s, 30s
+                                        wait_time = 10 * (attempt + 1)
                                         logger.warning(f"gemini_pro 429 on attempt {attempt+1}/3, waiting {wait_time}s before retry")
                                         await asyncio.sleep(wait_time)
                                     else:
@@ -2311,10 +2319,17 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                                 try:
                                     resp = await asyncio.wait_for(
                                         asyncio.to_thread(gemini_flash.generate_content, prompt),
-                                        timeout=60.0
+                                        timeout=120.0
                                     )
                                     return resp.text.strip()
-                                except (Exception, asyncio.TimeoutError) as e:
+                                except asyncio.TimeoutError:
+                                    if attempt < 2:
+                                        wait_time = 5 * (attempt + 1)
+                                        logger.warning(f"gemini_flash timeout on attempt {attempt+1}/3, waiting {wait_time}s")
+                                        await asyncio.sleep(wait_time)
+                                    else:
+                                        raise Exception("Both Gemini Pro and Flash timed out after all retries")
+                                except Exception as e:
                                     err_str = str(e)
                                     if attempt < 2 and ("429" in err_str or "Resource exhausted" in err_str):
                                         wait_time = 10 * (attempt + 1)
@@ -3596,7 +3611,7 @@ Generate a helpful, well-formatted reply using markdown. Rules:
 - IMPORTANT: Do NOT re-generate or include any mermaid diagram code — it will be appended automatically.
 """
             try:
-                reply_response = await gemini_with_retry(gemini_flash, reply_prompt, retries=3, timeout=20)
+                reply_response = await gemini_with_retry(gemini_flash, reply_prompt, retries=4, timeout=60)
                 reply_text = reply_response.text.strip()
             except Exception as e:
                 logger.error(f"Reply generation failed: {e}")
