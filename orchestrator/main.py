@@ -2946,7 +2946,7 @@ Return ONLY the full modified Python file content with the bug injected. Add a c
                             except Exception as ct_err:
                                 logger.warning(f"Chaos Jenkins trigger failed: {ct_err}")
 
-                        result = {"status": "chaos_injected", "repo": chaos_repo, "file": target_file, "committed": chaos_committed}
+                        result = {"status": "chaos_injected", "repo": chaos_repo, "file": target_file, "committed": chaos_committed, "oldCode": original_content, "newCode": bugged_code, "file_path": target_file}
 
                     # ---------- AI TEST CASE GENERATOR ----------
                     elif tool == "testing" and action == "generate":
