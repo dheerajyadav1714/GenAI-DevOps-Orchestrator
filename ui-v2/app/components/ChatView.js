@@ -5,23 +5,51 @@ import ReactDiffViewer from 'react-diff-viewer-continued';
 
 // ─── Mermaid Sanitizer ──────────────────────────────────────────────────────
 function sanitizeMermaid(raw) {
-  let code = raw;
-  // Fix: A --- "label" --- B  →  A ---|"label"| B
-  code = code.replace(/(\S+)\s*---\s*"([^"]+)"\s*---\s*(\S+)/g, '$1 ---|"$2"| $3');
-  // Fix: A --- "label" --> B  →  A -->|"label"| B
-  code = code.replace(/(\S+)\s*---\s*"([^"]+)"\s*-->\s*(\S+)/g, '$1 -->|"$2"| $3');
-  // Fix: A -- "label" --- B  →  A ---|"label"| B
-  code = code.replace(/(\S+)\s*--\s*"([^"]+)"\s*---\s*(\S+)/g, '$1 ---|"$2"| $3');
-  // Fix: A --- "label" --- B (single quotes)  →  A ---|"label"| B
-  code = code.replace(/(\S+)\s*---\s*'([^']+)'\s*---\s*(\S+)/g, '$1 ---|"$2"| $3');
-  // Fix: parentheses inside node labels that aren't wrapped in quotes
-  // e.g. NodeId["Label (extra)"] is fine, but NodeId[Label (extra)] breaks
-  code = code.replace(/\[([^\]"]*\([^\]]*\)[^\]"]*)\]/g, (match, inner) => {
-    if (inner.startsWith('"') && inner.endsWith('"')) return match;
-    return `["${inner}"]`;
+  // Process line by line for better control
+  const lines = raw.split('\n');
+  const sanitized = lines.map(line => {
+    let l = line;
+
+    // === FIX 1: Nested quotes + brackets inside node labels ===
+    // Gemini generates: NodeId["text <br>"inner [stuff"]"]
+    // Should be:        NodeId["text <br> inner stuff"]
+    // Strategy: find ["..."] blocks and clean their insides
+    l = l.replace(/\["((?:[^"]|"")*?)"\]/g, (match, content) => {
+      // If content has no issues, return as-is
+      if (!content.includes('"') && !content.includes('[')) return match;
+      // Clean inner quotes and brackets
+      let clean = content.replace(/"/g, '').replace(/\[/g, '(').replace(/\]/g, ')');
+      return `["${clean}"]`;
+    });
+
+    // === FIX 2: Catch broken patterns like ["text "more [x"]"] ===
+    // Match node definitions with mismatched quotes/brackets
+    l = l.replace(/(\w+)\["([^"]*)"([^"]*)\[([^\]]*)"?\]"?\]/g, (match, id, p1, p2, p3) => {
+      const clean = `${p1} ${p2}${p3}`.replace(/\s+/g, ' ').trim();
+      return `${id}["${clean}"]`;
+    });
+
+    // === FIX 3: Edge label syntax ===
+    // A --- "label" --- B  ->  A ---|"label"| B
+    l = l.replace(/(\S+)\s*---\s*"([^"]+)"\s*---\s*(\S+)/g, '$1 ---|"$2"| $3');
+    // A --- "label" --> B  ->  A -->|"label"| B
+    l = l.replace(/(\S+)\s*---\s*"([^"]+)"\s*-->\s*(\S+)/g, '$1 -->|"$2"| $3');
+    // A -- "label" --- B  ->  A ---|"label"| B
+    l = l.replace(/(\S+)\s*--\s*"([^"]+)"\s*---\s*(\S+)/g, '$1 ---|"$2"| $3');
+    // A --- 'label' --- B (single quotes)
+    l = l.replace(/(\S+)\s*---\s*'([^']+)'\s*---\s*(\S+)/g, '$1 ---|"$2"| $3');
+
+    // === FIX 4: Unquoted parens in simple [...] labels ===
+    l = l.replace(/\[([^\]"]*\([^\]]*\)[^\]"]*)\]/g, (match, inner) => {
+      if (inner.startsWith('"') && inner.endsWith('"')) return match;
+      return `["${inner}"]`;
+    });
+
+    return l;
   });
-  return code;
+  return sanitized.join('\n');
 }
+
 
 // ─── Mermaid Renderer ───────────────────────────────────────────────────────
 function MermaidDiagram({ code }) {
