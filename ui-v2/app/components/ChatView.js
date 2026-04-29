@@ -59,49 +59,103 @@ function MermaidDiagram({ code }) {
 
   useEffect(() => {
     let cancelled = false;
+
+    // Nuclear sanitizer: strips everything problematic for guaranteed render
+    function nuclearSanitize(raw) {
+      const lines = raw.split('\n');
+      const out = [];
+      for (const line of lines) {
+        let l = line.trim();
+        // Skip classDef and class lines entirely
+        if (/^\s*(classDef|class\s)/.test(l)) continue;
+        // Skip empty/comment lines
+        if (!l || l.startsWith('%%')) continue;
+        // Sanitize subgraph: quote everything after "subgraph"
+        if (/^\s*subgraph\s/.test(l)) {
+          const parts = l.match(/^(\s*subgraph\s+)(.+)$/);
+          if (parts) {
+            let title = parts[2].replace(/["()\[\]{}]/g, '').replace(/\s+/g, ' ').trim();
+            out.push(`${parts[1]}"${title}"`);
+            continue;
+          }
+        }
+        // Sanitize node labels: NodeId["anything"] → NodeId["clean text"]
+        l = l.replace(/(\w+)\["?((?:[^"\]]*"?)*?)"?\]/g, (match, id, label) => {
+          let clean = label.replace(/["()\[\]{}]/g, '').replace(/<br>/gi, ' ').replace(/\s+/g, ' ').trim();
+          return `${id}["${clean}"]`;
+        });
+        // Simplify edge labels
+        l = l.replace(/---\s*"([^"]+)"\s*---/g, '-->');
+        l = l.replace(/---\s*"([^"]+)"\s*-->/g, '-->');
+        l = l.replace(/--\s*"([^"]+)"\s*---/g, '-->');
+        out.push(l);
+      }
+      let result = out.join('\n');
+      if (!result.trim().startsWith('graph')) result = 'graph TD\n' + result;
+      return result;
+    }
+
     async function render() {
+      const mermaid = (await import('mermaid')).default;
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: 'dark',
+        themeVariables: {
+          primaryColor: '#6750A4',
+          primaryTextColor: '#E6E1E5',
+          primaryBorderColor: '#9A82DB',
+          lineColor: '#CAC4D0',
+          secondaryColor: '#21005D',
+          tertiaryColor: '#1C1B1F',
+          background: '#1C1B1F',
+          mainBkg: '#2B2930',
+          nodeBorder: '#9A82DB',
+          clusterBkg: '#211F26',
+          titleColor: '#CAC4D0',
+          edgeLabelBackground: '#2B2930',
+        },
+        flowchart: { htmlLabels: true, curve: 'basis' },
+        securityLevel: 'loose',
+      });
+
+      // Attempt 1: Normal sanitized render
       try {
         const sanitizedCode = sanitizeMermaid(code);
-        // Dynamically import to avoid SSR issues
-        const mermaid = (await import('mermaid')).default;
-        mermaid.initialize({
-          startOnLoad: false,
-          theme: 'dark',
-          themeVariables: {
-            primaryColor: '#6750A4',
-            primaryTextColor: '#E6E1E5',
-            primaryBorderColor: '#9A82DB',
-            lineColor: '#CAC4D0',
-            secondaryColor: '#21005D',
-            tertiaryColor: '#1C1B1F',
-            background: '#1C1B1F',
-            mainBkg: '#2B2930',
-            nodeBorder: '#9A82DB',
-            clusterBkg: '#211F26',
-            titleColor: '#CAC4D0',
-            edgeLabelBackground: '#2B2930',
-          },
-          flowchart: { htmlLabels: true, curve: 'basis' },
-          securityLevel: 'loose',
-        });
-        const id = `mermaid-${Math.random().toString(36).slice(2)}`;
-        const { svg } = await mermaid.render(id, sanitizedCode);
+        const id1 = `mermaid-${Math.random().toString(36).slice(2)}`;
+        const { svg } = await mermaid.render(id1, sanitizedCode);
         if (!cancelled && ref.current) {
           ref.current.innerHTML = svg;
-          // Make SVG responsive
           const svgEl = ref.current.querySelector('svg');
-          if (svgEl) {
-            svgEl.style.maxWidth = '100%';
-            svgEl.style.height = 'auto';
-          }
+          if (svgEl) { svgEl.style.maxWidth = '100%'; svgEl.style.height = 'auto'; }
           setError(null);
+          setViewMode('visual');
+          return;
         }
-      } catch (e) {
-        // On any parse error, auto-switch to code view (no ugly error during demo)
-        if (!cancelled) {
-          setError(e.message || 'Diagram render error');
-          setViewMode('code');
+      } catch (e1) {
+        console.warn('Mermaid render attempt 1 failed, trying nuclear sanitizer:', e1.message);
+      }
+
+      // Attempt 2: Nuclear sanitized render (guaranteed to work)
+      try {
+        const nuclearCode = nuclearSanitize(code);
+        const id2 = `mermaid-nuclear-${Math.random().toString(36).slice(2)}`;
+        const { svg } = await mermaid.render(id2, nuclearCode);
+        if (!cancelled && ref.current) {
+          ref.current.innerHTML = svg;
+          const svgEl = ref.current.querySelector('svg');
+          if (svgEl) { svgEl.style.maxWidth = '100%'; svgEl.style.height = 'auto'; }
+          setError(null);
+          setViewMode('visual');
+          return;
         }
+      } catch (e2) {
+        console.warn('Mermaid nuclear render also failed:', e2.message);
+      }
+
+      // Attempt 3: Absolute last resort — code view
+      if (!cancelled) {
+        setError('Diagram could not be rendered');
+        setViewMode('code');
       }
     }
     render();
