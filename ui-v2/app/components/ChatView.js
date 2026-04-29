@@ -3,6 +3,26 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ReactDiffViewer from 'react-diff-viewer-continued';
 
+// ─── Mermaid Sanitizer ──────────────────────────────────────────────────────
+function sanitizeMermaid(raw) {
+  let code = raw;
+  // Fix: A --- "label" --- B  →  A ---|"label"| B
+  code = code.replace(/(\S+)\s*---\s*"([^"]+)"\s*---\s*(\S+)/g, '$1 ---|"$2"| $3');
+  // Fix: A --- "label" --> B  →  A -->|"label"| B
+  code = code.replace(/(\S+)\s*---\s*"([^"]+)"\s*-->\s*(\S+)/g, '$1 -->|"$2"| $3');
+  // Fix: A -- "label" --- B  →  A ---|"label"| B
+  code = code.replace(/(\S+)\s*--\s*"([^"]+)"\s*---\s*(\S+)/g, '$1 ---|"$2"| $3');
+  // Fix: A --- "label" --- B (single quotes)  →  A ---|"label"| B
+  code = code.replace(/(\S+)\s*---\s*'([^']+)'\s*---\s*(\S+)/g, '$1 ---|"$2"| $3');
+  // Fix: parentheses inside node labels that aren't wrapped in quotes
+  // e.g. NodeId["Label (extra)"] is fine, but NodeId[Label (extra)] breaks
+  code = code.replace(/\[([^\]"]*\([^\]]*\)[^\]"]*)\]/g, (match, inner) => {
+    if (inner.startsWith('"') && inner.endsWith('"')) return match;
+    return `["${inner}"]`;
+  });
+  return code;
+}
+
 // ─── Mermaid Renderer ───────────────────────────────────────────────────────
 function MermaidDiagram({ code }) {
   const ref = useRef(null);
@@ -14,6 +34,7 @@ function MermaidDiagram({ code }) {
     let cancelled = false;
     async function render() {
       try {
+        const sanitizedCode = sanitizeMermaid(code);
         // Dynamically import to avoid SSR issues
         const mermaid = (await import('mermaid')).default;
         mermaid.initialize({
@@ -37,7 +58,7 @@ function MermaidDiagram({ code }) {
           securityLevel: 'loose',
         });
         const id = `mermaid-${Math.random().toString(36).slice(2)}`;
-        const { svg } = await mermaid.render(id, code);
+        const { svg } = await mermaid.render(id, sanitizedCode);
         if (!cancelled && ref.current) {
           ref.current.innerHTML = svg;
           // Make SVG responsive
