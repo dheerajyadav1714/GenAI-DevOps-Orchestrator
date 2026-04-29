@@ -227,7 +227,7 @@ def mcp_request(method, url, retries=3, **kwargs):
 
 
 # ========== GEMINI RETRY HELPER (429 backoff) ==========
-async def gemini_with_retry(model, prompt, retries=3, timeout=25):
+async def gemini_with_retry(model, prompt, retries=4, timeout=25):
     """Call Gemini with exponential backoff for 429 rate limit errors + per-call timeout"""
     async with _gemini_semaphore:  # Serialize to prevent concurrent 429s
         for attempt in range(retries):
@@ -239,19 +239,19 @@ async def gemini_with_retry(model, prompt, retries=3, timeout=25):
                 return resp
             except asyncio.TimeoutError:
                 if attempt < retries - 1:
-                    wait_time = 2 ** (attempt + 1)
+                    wait_time = 5 * (attempt + 1)  # 5s, 10s, 15s, 20s
                     logger.warning(f"Gemini call timed out ({timeout}s), retrying in {wait_time}s (attempt {attempt+1}/{retries})")
                     await asyncio.sleep(wait_time)
                 else:
                     raise Exception(f"Gemini timed out after {retries} attempts")
             except Exception as e:
                 err_str = str(e)
-                if "429" in err_str and attempt < retries - 1:
-                    wait_time = 2 ** (attempt + 1)  # 2s, 4s, 8s
+                if ("429" in err_str or "Resource exhausted" in err_str) and attempt < retries - 1:
+                    wait_time = 5 * (2 ** attempt)  # 5s, 10s, 20s, 40s
                     logger.warning(f"Gemini 429 rate limit hit, retrying in {wait_time}s (attempt {attempt+1}/{retries})")
                     await asyncio.sleep(wait_time)
                 elif attempt < retries - 1 and ("500" in err_str or "503" in err_str or "connection" in err_str.lower()):
-                    wait_time = 2 ** (attempt + 1)
+                    wait_time = 5 * (attempt + 1)
                     logger.warning(f"Gemini transient error, retrying in {wait_time}s: {err_str[:100]}")
                     await asyncio.sleep(wait_time)
                 else:
@@ -2288,16 +2288,40 @@ Output ONLY the raw updated YAML content. No markdown fences."""
                         except: pass
 
                         async def generate_with_fallback(prompt):
-                            try:
-                                resp = await asyncio.wait_for(
-                                    asyncio.to_thread(gemini_pro.generate_content, prompt),
-                                    timeout=15.0
-                                )
-                                return resp.text.strip()
-                            except (Exception, asyncio.TimeoutError) as e:
-                                logger.warning(f"gemini_pro rate limit or timeout ({e}), falling back to gemini_flash")
-                                resp = await asyncio.to_thread(gemini_flash.generate_content, prompt)
-                                return resp.text.strip()
+                            """Call Gemini Pro with robust retry + Flash fallback with retry for 429s"""
+                            # Try Pro first with retries
+                            for attempt in range(3):
+                                try:
+                                    resp = await asyncio.wait_for(
+                                        asyncio.to_thread(gemini_pro.generate_content, prompt),
+                                        timeout=60.0
+                                    )
+                                    return resp.text.strip()
+                                except (Exception, asyncio.TimeoutError) as e:
+                                    err_str = str(e)
+                                    if attempt < 2 and ("429" in err_str or "Resource exhausted" in err_str):
+                                        wait_time = 10 * (attempt + 1)  # 10s, 20s, 30s
+                                        logger.warning(f"gemini_pro 429 on attempt {attempt+1}/3, waiting {wait_time}s before retry")
+                                        await asyncio.sleep(wait_time)
+                                    else:
+                                        logger.warning(f"gemini_pro failed ({err_str[:100]}), falling back to gemini_flash")
+                                        break
+                            # Flash fallback with retries
+                            for attempt in range(3):
+                                try:
+                                    resp = await asyncio.wait_for(
+                                        asyncio.to_thread(gemini_flash.generate_content, prompt),
+                                        timeout=60.0
+                                    )
+                                    return resp.text.strip()
+                                except (Exception, asyncio.TimeoutError) as e:
+                                    err_str = str(e)
+                                    if attempt < 2 and ("429" in err_str or "Resource exhausted" in err_str):
+                                        wait_time = 10 * (attempt + 1)
+                                        logger.warning(f"gemini_flash 429 on attempt {attempt+1}/3, waiting {wait_time}s before retry")
+                                        await asyncio.sleep(wait_time)
+                                    else:
+                                        raise
 
                         # Agent 1: Architect (Gemini Pro for deep reasoning)
                         if has_real_csv:
